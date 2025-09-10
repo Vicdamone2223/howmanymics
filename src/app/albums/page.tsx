@@ -1,12 +1,13 @@
+// src/app/albums/page.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
-type ReleaseRow = {
-  id: number;
+type Release = {
+  id: number | string;
   title: string;
   slug: string;
   cover_url: string | null;
@@ -15,62 +16,100 @@ type ReleaseRow = {
   release_ratings?: { rating: number }[];
 };
 
-const PAGE = 24;
+const PAGE_SIZE = 24;
 
 export default function AlbumsPage() {
-  const sp = useSearchParams();
-  const year = parseInt(sp.get('year') || String(new Date().getFullYear()), 10);
+  return (
+    <Suspense fallback={<main className="mx-auto max-w-6xl px-4 py-8">Loading…</main>}>
+      <AlbumsInner />
+    </Suspense>
+  );
+}
 
-  const page = Math.max(1, parseInt(sp.get('page') || '1', 10));
+function AlbumsInner() {
+  const router = useRouter();
+  const params = useSearchParams();
 
-  const [rows, setRows] = useState<(ReleaseRow & { people_avg: number | null; _score: number })[]>([]);
+  const q = (params.get('q') || '').trim();
+  const yearFilter = params.get('year');
+  const page = Math.max(1, parseInt(params.get('page') || '1', 10));
+
+  const [rows, setRows] = useState<Release[]>([]);
   const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const from = (page - 1) * PAGE;
-      const to = from + PAGE - 1;
 
-      const { data } = await supabase
+      let req = supabase
         .from('releases')
         .select('id,title,slug,cover_url,year,rating_staff,release_ratings(rating)')
-        .eq('year', year)
-        .range(from, to)
-        .order('title', { ascending: true });
+        .order('year', { ascending: false })
+        .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
 
-      const list = (data || []) as ReleaseRow[];
-      const scored = list.map((r) => {
-        const pplNums = (r.release_ratings || []).map((x) => Number(x.rating)).filter(Number.isFinite);
-        const people_avg = pplNums.length ? Math.round(pplNums.reduce((s, n) => s + n, 0) / pplNums.length) : null;
-        const staff = r.rating_staff ?? null;
-        const _score = (Number(staff ?? 0) + Number(people_avg ?? 0)) / 2;
-        return { ...r, people_avg, _score };
-      });
+      if (yearFilter) req = req.eq('year', Number(yearFilter));
+      if (q) req = req.or(`title.ilike.%${q}%,slug.ilike.%${q}%`);
 
-      scored.sort((a, b) => b._score - a._score);
-      setRows(scored);
-      setHasMore(list.length === PAGE);
+      const { data, error } = await req;
+      if (error) {
+        console.error(error);
+        setRows([]);
+        setHasMore(false);
+      } else {
+        const batch = (data || []) as Release[];
+        setRows(batch);
+        setHasMore(batch.length === PAGE_SIZE);
+      }
       setLoading(false);
     })();
-  }, [year, page]);
+  }, [q, yearFilter, page]);
 
-  const title = useMemo(() => `Albums in ${year}`, [year]);
+  function setParam(key: string, value: string | null) {
+    const sp = new URLSearchParams(params);
+    if (value === null || value === '') sp.delete(key);
+    else sp.set(key, value);
+    // whenever filters change, reset to page 1
+    sp.set('page', '1');
+    router.replace(`/albums?${sp.toString()}`);
+  }
+
+  function go(p: number) {
+    const sp = new URLSearchParams(params);
+    sp.set('page', String(p));
+    router.replace(`/albums?${sp.toString()}`);
+  }
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
-      <h1 className="text-2xl font-extrabold tracking-tight mb-4">{title}</h1>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <input
+          className="input w-full sm:w-80"
+          placeholder="Search albums by title or slug…"
+          defaultValue={q}
+          onChange={(e) => setParam('q', e.target.value)}
+        />
+        <select
+          className="input"
+          value={yearFilter || ''}
+          onChange={(e) => setParam('year', e.target.value || null)}
+        >
+          <option value="">All years</option>
+          {Array.from({ length: 60 }, (_, i) => new Date().getFullYear() - i).map((y) => (
+            <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+      </div>
 
       {loading && rows.length === 0 ? (
         <p className="opacity-70 text-sm">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="opacity-70 text-sm">No albums found for {year}.</p>
+        <p className="opacity-70 text-sm">No albums found.</p>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           {rows.map((r) => (
             <Link
-              key={r.id}
+              key={String(r.id)}
               href={`/release/${r.slug}`}
               className="group block rounded-lg overflow-hidden border border-zinc-800 hover:border-zinc-600"
             >
@@ -83,27 +122,42 @@ export default function AlbumsPage() {
               <div className="p-2">
                 <div className="font-semibold leading-tight group-hover:underline truncate">{r.title}</div>
                 <div className="text-xs opacity-70">{r.year ?? '—'}</div>
-                <div className="mt-2 flex items-center gap-2 text-xs">
-                  {r.rating_staff != null && (
-                    <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
-                      <span role="img" aria-label="mic">🎙️</span>
-                      <strong className="tabular-nums">{r.rating_staff}</strong>
-                    </span>
-                  )}
-                  {r.people_avg != null && (
-                    <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
-                      <span role="img" aria-label="fire">🔥</span>
-                      <strong className="tabular-nums">{r.people_avg}</strong>
-                    </span>
-                  )}
-                </div>
               </div>
             </Link>
           ))}
         </div>
       )}
 
-      {/* If you want pagination later, we’ll hook up router.replace with ?page= */}
+      <div className="mt-6 flex items-center justify-between">
+        <button
+          className="text-sm px-3 py-1 rounded border border-zinc-700 hover:bg-zinc-900 disabled:opacity-40"
+          disabled={page <= 1}
+          onClick={() => go(page - 1)}
+        >
+          ← Prev
+        </button>
+        <div className="text-xs opacity-70">Page {page}</div>
+        <button
+          className="text-sm px-3 py-1 rounded border border-zinc-700 hover:bg-zinc-900 disabled:opacity-40"
+          disabled={!hasMore}
+          onClick={() => go(page + 1)}
+        >
+          Next →
+        </button>
+      </div>
+
+      <style jsx>{`
+        .input {
+          background: #0a0a0a;
+          border: 1px solid #27272a;
+          border-radius: 0.5rem;
+          padding: 0.5rem 0.75rem;
+          color: #f4f4f5;
+          outline: none;
+        }
+        .input::placeholder { color: #a1a1aa; }
+        .input:focus { box-shadow: 0 0 0 2px rgba(249,115,22,0.35); }
+      `}</style>
     </main>
   );
 }
