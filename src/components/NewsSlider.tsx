@@ -1,3 +1,4 @@
+// src/components/NewsSlider.tsx
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
@@ -11,7 +12,17 @@ type NewsItem = {
   href: string;
 };
 
-export default function NewsSlider({ items = [] as NewsItem[] }) {
+type Props = {
+  /** Slides to render (capped to 5 internally) */
+  items?: NewsItem[];
+  /** Autoplay interval in milliseconds (default 5000) */
+  autoPlayMs?: number;
+};
+
+export default function NewsSlider({
+  items = [],
+  autoPlayMs = 5000,
+}: Props) {
   // cap to 5 in case parent passes more
   const slides = items.slice(0, 5);
 
@@ -39,12 +50,13 @@ export default function NewsSlider({ items = [] as NewsItem[] }) {
     el.scrollBy({ left: amount, behavior: 'smooth' });
   }
 
-  // autoplay every 5s
+  // autoplay (only if more than 1 slide)
   useEffect(() => {
     if (slides.length <= 1) return;
-    const timer = setInterval(() => scrollByPage(1), 5000);
+    const interval = Math.max(1000, autoPlayMs); // guard against tiny/invalid values
+    const timer = setInterval(() => scrollByPage(1), interval);
     return () => clearInterval(timer);
-  }, [slides.length]);
+  }, [slides.length, autoPlayMs]);
 
   if (!slides.length) return <div className="opacity-70 text-sm">No featured posts yet.</div>;
 
@@ -64,7 +76,7 @@ export default function NewsSlider({ items = [] as NewsItem[] }) {
           aria-label="Previous"
           onClick={() => scrollByPage(-1)}
           disabled={atStart}
-          className={`absolute left-1 top-1/2 -translate-y-1/2 z-10 h-9 w-9 rounded-full border border-zinc-800 bg-zinc-950/70 backdrop-blur grid place-items-center hover:bg-zinc-900/70 disabled:opacity-40`}
+          className="absolute left-1 top-1/2 -translate-y-1/2 z-10 h-9 w-9 rounded-full border border-zinc-800 bg-zinc-950/70 backdrop-blur grid place-items-center hover:bg-zinc-900/70 disabled:opacity-40"
         >
           ‹
         </button>
@@ -75,7 +87,7 @@ export default function NewsSlider({ items = [] as NewsItem[] }) {
           aria-label="Next"
           onClick={() => scrollByPage(1)}
           disabled={atEnd}
-          className={`absolute right-1 top-1/2 -translate-y-1/2 z-10 h-9 w-9 rounded-full border border-zinc-800 bg-zinc-950/70 backdrop-blur grid place-items-center hover:bg-zinc-900/70 disabled:opacity-40`}
+          className="absolute right-1 top-1/2 -translate-y-1/2 z-10 h-9 w-9 rounded-full border border-zinc-800 bg-zinc-950/70 backdrop-blur grid place-items-center hover:bg-zinc-900/70 disabled:opacity-40"
         >
           ›
         </button>

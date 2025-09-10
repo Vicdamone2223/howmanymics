@@ -1,3 +1,4 @@
+// src/app/u/[username]/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -17,10 +18,23 @@ type Profile = {
   instagram: string | null;
 };
 
+type ReleaseLite = {
+  slug: string;
+  title: string;
+  cover_url: string | null;
+};
+
 type RatingRow = {
   rating: number;
   created_at: string;
-  releases?: { slug: string; title: string; cover_url: string | null } | null;
+  releases?: ReleaseLite | null; // single, normalized below
+};
+
+// What Supabase may actually return for the embed (object OR array)
+type RatingQueryRow = {
+  rating: number;
+  created_at: string;
+  releases: ReleaseLite | ReleaseLite[] | null;
 };
 
 export default function PublicProfile() {
@@ -38,8 +52,12 @@ export default function PublicProfile() {
         .ilike('username', username)
         .limit(1);
 
-      const row = prof?.[0] as Profile | undefined;
-      if (!row) { setLoading(false); setP(null); return; }
+      const row = (prof?.[0] as Profile | undefined) ?? null;
+      if (!row) {
+        setLoading(false);
+        setP(null);
+        return;
+      }
       setP(row);
 
       // latest ratings by this user (if you store user_id in release_ratings)
@@ -50,7 +68,27 @@ export default function PublicProfile() {
         .order('created_at', { ascending: false })
         .limit(10);
 
-      setRatings((rr || []) as RatingRow[]);
+      // Normalize releases: Supabase can embed as object OR array depending on FK direction
+      const normalized: RatingRow[] = (rr ?? []).map((r) => {
+        const q = r as RatingQueryRow;
+        const rel = Array.isArray(q.releases)
+          ? q.releases[0] ?? null
+          : q.releases ?? null;
+
+        return {
+          rating: Number(q.rating),
+          created_at: q.created_at,
+          releases: rel
+            ? {
+                slug: rel.slug,
+                title: rel.title,
+                cover_url: rel.cover_url ?? null,
+              }
+            : null,
+        };
+      });
+
+      setRatings(normalized);
       setLoading(false);
     })();
   }, [username]);
@@ -75,9 +113,31 @@ export default function PublicProfile() {
           {p.location && <div className="opacity-70 text-sm mt-1">{p.location}</div>}
           {p.bio && <p className="mt-3 opacity-90 max-w-2xl">{p.bio}</p>}
           <div className="mt-3 flex items-center gap-3 text-sm opacity-80">
-            {p.website && <a className="underline" href={p.website} target="_blank">Website</a>}
-            {p.twitter && <a className="underline" href={`https://twitter.com/${p.twitter}`} target="_blank">Twitter</a>}
-            {p.instagram && <a className="underline" href={`https://instagram.com/${p.instagram}`} target="_blank">Instagram</a>}
+            {p.website && (
+              <a className="underline" href={p.website} target="_blank" rel="noreferrer">
+                Website
+              </a>
+            )}
+            {p.twitter && (
+              <a
+                className="underline"
+                href={`https://twitter.com/${p.twitter}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Twitter
+              </a>
+            )}
+            {p.instagram && (
+              <a
+                className="underline"
+                href={`https://instagram.com/${p.instagram}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Instagram
+              </a>
+            )}
           </div>
         </div>
       </div>
@@ -102,8 +162,13 @@ export default function PublicProfile() {
                   className="w-full h-36 object-cover"
                 />
                 <div className="p-2 text-sm">
-                  <div className="font-semibold truncate">{r.releases?.title || 'Unknown album'}</div>
-                  <div className="opacity-70">Score: <strong className="tabular-nums">{r.rating}</strong></div>
+                  <div className="font-semibold truncate">
+                    {r.releases?.title || 'Unknown album'}
+                  </div>
+                  <div className="opacity-70">
+                    Score:{' '}
+                    <strong className="tabular-nums">{r.rating}</strong>
+                  </div>
                 </div>
               </Link>
             ))}

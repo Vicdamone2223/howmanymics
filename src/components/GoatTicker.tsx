@@ -29,7 +29,12 @@ type Row = {
   overall: number | null;        // 60% staff + 40% people, or single-score fallback
 };
 
-export default function GoatTicker() {
+type Props = {
+  /** How many artists to show in the ticker (default 15) */
+  limit?: number;
+};
+
+export default function GoatTicker({ limit = 15 }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
 
   useEffect(() => {
@@ -97,9 +102,9 @@ export default function GoatTicker() {
 
       const ordered = [...withOverall, ...rankOnly];
 
-      setRows(ordered.slice(0, 15)); // top 15 in ticker
+      setRows(ordered.slice(0, limit));
     })();
-  }, []);
+  }, [limit]);
 
   if (rows.length === 0) return null;
 

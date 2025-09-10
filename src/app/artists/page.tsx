@@ -1,7 +1,8 @@
 // src/app/artists/page.tsx
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { Suspense } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
@@ -17,6 +18,15 @@ type Artist = {
 const PAGE_SIZE = 50;
 
 export default function ArtistsPage() {
+  // Wrap the client body (which calls useSearchParams) in Suspense
+  return (
+    <Suspense fallback={<main className="mx-auto max-w-6xl px-4 py-8">Loading…</main>}>
+      <ArtistsPageBody />
+    </Suspense>
+  );
+}
+
+function ArtistsPageBody() {
   const router = useRouter();
   const searchParams = useSearchParams();
 

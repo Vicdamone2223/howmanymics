@@ -1,6 +1,7 @@
+// src/components/TopOfYear.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -14,7 +15,14 @@ type Release = {
   release_ratings?: { rating: number }[];
 };
 
-export default function TopOfYear({ year = 2025 }: { year?: number }) {
+type Props = {
+  year?: number;
+  // Accept items to match the parent call, but ignore it here since this component self-fetches.
+  // Using unknown avoids pulling in extra types and doesn't change behavior.
+  items?: unknown;
+};
+
+export default function TopOfYear({ year = 2025 }: Props) {
   const [rows, setRows] = useState<(Release & { people_avg: number | null; _score: number })[]>([]);
 
   useEffect(() => {
@@ -24,13 +32,18 @@ export default function TopOfYear({ year = 2025 }: { year?: number }) {
         .select('id,title,slug,cover_url,year,rating_staff,release_ratings(rating)')
         .eq('year', year)
         .limit(1000);
-      const scored = (data || []).map((r: any) => {
-        const nums = (r.release_ratings || []).map((x: any) => Number(x.rating)).filter(Number.isFinite);
-        const people_avg = nums.length ? Math.round(nums.reduce((s: number, n: number) => s + n, 0) / nums.length) : null;
+
+      const scored = (data || []).map((r: Release) => {
+        const nums = (r.release_ratings || [])
+          .map((x) => Number(x.rating))
+          .filter((n) => Number.isFinite(n));
+        const people_avg =
+          nums.length ? Math.round(nums.reduce((s, n) => s + n, 0) / nums.length) : null;
         const staff = r.rating_staff ?? null;
         const _score = (Number(staff ?? 0) + Number(people_avg ?? 0)) / 2; // 50/50
         return { ...r, people_avg, _score };
       });
+
       scored.sort((a, b) => b._score - a._score);
       setRows(scored.slice(0, 4));
     })();

@@ -12,19 +12,54 @@ import TodayInHipHopWidget from '@/components/TodayInHipHopWidget';
 import DebateSpotlight from '@/components/DebateSpotlight';
 import ListsRail from '@/components/ListsRail';
 
-import type { AlbumYearRow, Debate, ListCard, NewsItem, TodayEvent } from '@/types/hmm';
+import type {
+  AlbumYearRow,
+  Debate,
+  ListCard,
+  NewsItem,
+  TodayEvent,
+} from '@/types/hmm';
 
-function yyyymmddLocal(d = new Date()) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-function addMonths(d: Date, m: number) {
-  const x = new Date(d);
-  x.setMonth(x.getMonth() + m);
-  return x;
-}
+// ---- Row types for Supabase responses (to avoid `any`) ----
+type ArticleRow = {
+  id: number;
+  title: string;
+  slug: string;
+  cover_url: string | null;
+  excerpt: string | null;
+  dek: string | null;
+  kind: 'article' | 'review';
+  published_at: string | null;
+};
+
+type ReleaseRow = {
+  id: number;
+  title: string;
+  slug: string;
+  cover_url: string | null;
+  year: number | null;
+  rating_staff: number | null;
+  // Supabase join returns an array of artists
+  artists: { name: string }[] | null;
+  release_ratings: { rating: number }[] | null;
+};
+
+type TodayRow = {
+  type: TodayEvent['type'];
+  text: string;
+  href: string | null;
+};
+
+type DebateRow = {
+  title: string;
+  a_label: string | null;
+  b_label: string | null;
+  a_pct: number | null;
+  b_pct: number | null;
+  href: string | null;
+  is_featured: boolean | null;
+  updated_at: string | null;
+};
 
 export default function Home() {
   const year = useMemo(() => new Date().getFullYear(), []);
@@ -43,8 +78,18 @@ export default function Home() {
     href: '#',
   });
   const [lists] = useState<ListCard[]>([
-    { type: 'staff', title: '5 Albums That Changed the South', collageImg: '/placeholder/list1.jpg', href: '/list/south-changed' },
-    { type: 'fan', title: 'Top 10 NY Albums', collageImg: '/placeholder/list2.jpg', href: '/list/top-ny' },
+    {
+      type: 'staff',
+      title: '5 Albums That Changed the South',
+      collageImg: '/placeholder/list1.jpg',
+      href: '/list/south-changed',
+    },
+    {
+      type: 'fan',
+      title: 'Top 10 NY Albums',
+      collageImg: '/placeholder/list2.jpg',
+      href: '/list/top-ny',
+    },
   ]);
 
   useEffect(() => {
@@ -53,7 +98,9 @@ export default function Home() {
       try {
         const { data, error } = await supabase
           .from('articles')
-          .select('id,title,slug,cover_url,excerpt,dek,kind,published_at')
+          .select(
+            'id,title,slug,cover_url,excerpt,dek,kind,published_at'
+          )
           .not('published_at', 'is', null)
           .in('kind', ['article', 'review'])
           .order('published_at', { ascending: false })
@@ -61,11 +108,12 @@ export default function Home() {
 
         if (error) throw error;
 
-        const items: NewsItem[] = (data || []).map((a: any) => ({
+        const rows = (data ?? []) as ArticleRow[];
+        const items: NewsItem[] = rows.map((a) => ({
           id: String(a.id),
           title: a.title,
           dek: a.dek ?? a.excerpt ?? '',
-          tag: a.kind === 'review' ? 'REVIEW' : 'ARTICLE',
+          tag: (a.kind === 'review' ? 'REVIEW' : 'ARTICLE') as NewsItem['tag'],
           heroImg: a.cover_url || '/placeholder/hero1.jpg',
           href: `/articles/${a.slug}`,
         }));
@@ -80,13 +128,24 @@ export default function Home() {
       {
         const { data } = await supabase
           .from('releases')
-          .select('id,title,slug,cover_url,year,rating_staff,artists!inner(name),release_ratings(rating)')
+          .select(
+            'id,title,slug,cover_url,year,rating_staff,artists!inner(name),release_ratings(rating)'
+          )
           .eq('year', year);
 
-        const rows = (data || []).map((r: any) => {
-          const ratings = Array.isArray(r.release_ratings) ? r.release_ratings : [];
-          const pplNums = ratings.map((x: any) => Number(x.rating)).filter(Number.isFinite);
-          const peopleAvg = pplNums.length ? pplNums.reduce((s, n) => s + n, 0) / pplNums.length : null;
+        const rows = (data ?? []) as ReleaseRow[];
+
+        const formatted: AlbumYearRow[] = rows.map((r) => {
+          const ratings = Array.isArray(r.release_ratings)
+            ? r.release_ratings
+            : [];
+          const pplNums: number[] = ratings
+            .map((x) => Number(x.rating))
+            .filter((v): v is number => Number.isFinite(v));
+          const peopleAvg =
+            pplNums.length > 0
+              ? pplNums.reduce((sum: number, n: number) => sum + n, 0) / pplNums.length
+              : null;
 
           const staff = r.rating_staff ?? null;
           const overall =
@@ -102,28 +161,27 @@ export default function Home() {
             rank: 0,
             cover: r.cover_url || '/placeholder/cover1.jpg',
             title: r.title,
-            artist: r.artists?.name ?? 'Various',
+            artist: r.artists?.[0]?.name ?? 'Various',
             scoreOverall: overall ?? 0,
             date: String(r.year ?? ''),
             href: `/release/${r.slug}`,
-          } as AlbumYearRow;
+          };
         });
 
-        rows
+        formatted
           .sort((a, b) => (b.scoreOverall || 0) - (a.scoreOverall || 0))
           .slice(0, 4)
           .forEach((row, i) => (row.rank = i + 1));
 
-        if (rows.length) setTopYear(rows.slice(0, 4));
+        if (formatted.length) setTopYear(formatted.slice(0, 4));
       }
-
-      // ------- Upcoming rail uses its own component fetch (calendar_events) -------
 
       // ------- Today in Hip-Hop -------
       {
         const d = new Date();
         const mm = d.getMonth() + 1;
         const dd = d.getDate();
+
         const { data } = await supabase
           .from('today_in_hiphop')
           .select('type,text,href')
@@ -131,11 +189,12 @@ export default function Home() {
           .eq('day', dd)
           .limit(10);
 
-        const items = (data || []).map((t: any) => ({
-          type: t.type as TodayEvent['type'],
+        const rows = (data ?? []) as TodayRow[];
+        const items: TodayEvent[] = rows.map((t) => ({
+          type: t.type,
           text: t.text,
           href: t.href || '#',
-        })) as TodayEvent[];
+        }));
 
         if (items.length) setToday(items);
       }
@@ -144,13 +203,16 @@ export default function Home() {
       {
         const { data } = await supabase
           .from('debates')
-          .select('title,a_label,b_label,a_pct,b_pct,href,is_featured,updated_at')
+          .select(
+            'title,a_label,b_label,a_pct,b_pct,href,is_featured,updated_at'
+          )
           .order('is_featured', { ascending: false })
           .order('updated_at', { ascending: false })
           .limit(1);
 
-        if (data && data.length) {
-          const d = data[0] as any;
+        const rows = (data ?? []) as DebateRow[];
+        if (rows.length) {
+          const d = rows[0];
           setDebate({
             topic: d.title,
             aLabel: d.a_label ?? 'A',
@@ -171,8 +233,10 @@ export default function Home() {
 
       <GoatTicker limit={15} />
       <TopOfYear items={topYear} year={year} />
+
       {/* Upcoming rail self-fetches from calendar_events */}
       <UpcomingReleasesRail />
+
       <TodayInHipHopWidget items={today} />
       <DebateSpotlight debate={debate} />
       <ListsRail items={[]} />
