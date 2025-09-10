@@ -5,10 +5,11 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { notFound, useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
+import YouTubeEmbed from '@/components/YouTubeEmbed';
+import AlbumComments from '@/components/AlbumComments';
 
 type ReleaseRow = {
   id: number;
-  artist_id: number | string;          // ← added
   title: string;
   slug: string;
   cover_url: string | null;
@@ -18,8 +19,9 @@ type ReleaseRow = {
   youtube_id: string | null;
   riaa_cert: string | null;
   rating_staff: number | null;
-  tracks_disc1: string[] | null;       // legacy fallback
-  tracks_disc2: string[] | null;       // legacy fallback
+  tracks_disc1: string[] | null;
+  tracks_disc2: string[] | null;
+  artist_id: number | null; // <-- added
 };
 
 type TrackRow = {
@@ -63,11 +65,11 @@ export default function ReleasePage() {
       const { data: sess } = await supabase.auth.getSession();
       setSessionEmail(sess.session?.user?.email ?? null);
 
-      // 1) Release (include artist_id so we can filter features)
+      // 1) Release (now includes artist_id)
       const { data: rData, error: rErr } = await supabase
         .from('releases')
         .select(
-          'id,artist_id,title,slug,cover_url,year,producers,labels,youtube_id,riaa_cert,rating_staff,tracks_disc1,tracks_disc2'
+          'id,title,slug,cover_url,year,producers,labels,youtube_id,riaa_cert,rating_staff,tracks_disc1,tracks_disc2,artist_id'
         )
         .eq('slug', slug)
         .single();
@@ -81,34 +83,60 @@ export default function ReleasePage() {
       const release = rData as ReleaseRow;
       setRel(release);
 
-      // 2) Tracks (primary: view; fallback: legacy arrays)
+      // Resolve the primary artist slug in a LOCAL variable (no state/rerender needed)
+      let primarySlugLocal: string | null = null;
+      try {
+        if (release.artist_id != null) {
+          const { data: a } = await supabase
+            .from('artists')
+            .select('slug')
+            .eq('id', release.artist_id)
+            .single();
+          primarySlugLocal = (a as any)?.slug ?? null;
+        }
+        if (!primarySlugLocal) {
+          const { data: ra } = await supabase
+            .from('release_artists')
+            .select('artist:artists(slug)')
+            .eq('release_id', release.id)
+            .order('role', { ascending: true })
+            .limit(1);
+          primarySlugLocal = (ra?.[0] as any)?.artist?.slug ?? null;
+        }
+      } catch {
+        primarySlugLocal = null;
+      }
+
+      // 2) Tracks (view first; then legacy fallback). Filter out primary artist using the local slug.
       let gotTracks: TrackRow[] = [];
       try {
         const { data: vData, error: vErr } = await supabase
           .from('v_tracks_with_features')
-          .select('disc_no,track_no,title,duration_seconds,features')
+          .select('disc_no,track_no,title,duration_seconds,features,release_id')
           .eq('release_id', release.id)
           .order('disc_no', { ascending: true })
           .order('track_no', { ascending: true });
 
         if (!vErr && (vData?.length ?? 0) > 0) {
-          const mainId = String(release.artist_id);
-          gotTracks = (vData as any).map((t: any) => ({
-            disc_no: Number(t.disc_no || 1),
-            track_no: Number(t.track_no || 0),
-            title: t.title,
-            duration_seconds: typeof t.duration_seconds === 'number' ? t.duration_seconds : null,
-            // filter OUT the primary album artist from the features list
-            features: Array.isArray(t.features)
-              ? t.features.filter((f: any) => String(f?.id) !== mainId)
-              : [],
-          }));
+          gotTracks = (vData as any).map((t: any) => {
+            const feats = Array.isArray(t.features) ? t.features : [];
+            const filtered =
+              primarySlugLocal
+                ? feats.filter((f: any) => String(f.slug) !== String(primarySlugLocal))
+                : feats;
+            return {
+              disc_no: Number(t.disc_no || 1),
+              track_no: Number(t.track_no || 0),
+              title: t.title,
+              duration_seconds: typeof t.duration_seconds === 'number' ? t.duration_seconds : null,
+              features: filtered,
+            } as TrackRow;
+          });
         }
       } catch {
-        // ignore; will fall back
+        // ignore; fallback below
       }
 
-      // Fallback: legacy arrays on releases
       if (gotTracks.length === 0) {
         const d1 = (release.tracks_disc1 || []).map((title, i) => ({
           disc_no: 1,
@@ -129,36 +157,53 @@ export default function ReleasePage() {
       setTracks(gotTracks);
 
       // 3) People avg
-      const { data: pr } = await supabase
-        .from('release_ratings')
-        .select('rating')
-        .eq('release_id', release.id)
-        .limit(5000);
-      const nums = (pr || []).map((x: RatingRow) => Number(x.rating)).filter(Number.isFinite);
-      setPeopleAvg(nums.length ? Math.round(nums.reduce((s, n) => s + n, 0) / nums.length) : null);
-
-      // 4) Staff review (best-effort: find a review article that matches album title)
       try {
-        const { data: rev } = await supabase
+        const { data: pr } = await supabase
+          .from('release_ratings')
+          .select('rating')
+          .eq('release_id', release.id)
+          .limit(5000);
+        const nums = (pr || []).map((x: RatingRow) => Number(x.rating)).filter(Number.isFinite);
+        setPeopleAvg(nums.length ? Math.round(nums.reduce((s, n) => s + n, 0) / nums.length) : null);
+      } catch {
+        setPeopleAvg(null);
+      }
+
+      // 4) Staff review
+      try {
+        const { data: artDirect } = await supabase
           .from('articles')
-          .select('id,slug,title,dek,author,published_at,kind')
+          .select('id,slug,title,dek,author,published_at,kind,release_id,release_slug')
           .eq('kind', 'review')
-          .ilike('title', `%${release.title}%`)
+          .or(`release_id.eq.${release.id},release_slug.eq.${release.slug}`)
           .order('published_at', { ascending: false })
           .limit(1);
-        const row = (rev || [])[0] as any;
-        if (row) {
-          setReview({
-            id: row.id,
-            slug: row.slug,
-            title: row.title,
-            dek: row.dek,
-            author: row.author,
-            published_at: row.published_at,
-          });
-        } else {
-          setReview(null);
+
+        let picked = (artDirect || [])[0] as any;
+
+        if (!picked) {
+          const { data: fuzzy } = await supabase
+            .from('articles')
+            .select('id,slug,title,dek,author,published_at,kind')
+            .eq('kind', 'review')
+            .ilike('title', `%${release.title}%`)
+            .order('published_at', { ascending: false })
+            .limit(1);
+          picked = (fuzzy || [])[0] as any;
         }
+
+        setReview(
+          picked
+            ? {
+                id: picked.id,
+                slug: picked.slug,
+                title: picked.title,
+                dek: picked.dek,
+                author: picked.author,
+                published_at: picked.published_at,
+              }
+            : null
+        );
       } catch {
         setReview(null);
       }
@@ -191,7 +236,6 @@ export default function ReleasePage() {
       });
       if (error) throw error;
 
-      // refresh avg
       const { data: pr } = await supabase
         .from('release_ratings')
         .select('rating')
@@ -287,17 +331,9 @@ export default function ReleasePage() {
 
       {/* YouTube */}
       {rel.youtube_id && (
-        <div className="mt-6 rounded-xl border border-zinc-800 overflow-hidden">
-          <div className="aspect-video w-full">
-            <iframe
-              className="w-full h-full"
-              src={`https://www.youtube.com/embed/${rel.youtube_id}`}
-              title="YouTube player"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-            />
-          </div>
-        </div>
+        <section className="mt-6">
+          <YouTubeEmbed input={rel.youtube_id} title={`${rel.title} video`} />
+        </section>
       )}
 
       {/* Tracklist */}
@@ -316,7 +352,7 @@ export default function ReleasePage() {
                       <span className="font-medium">{t.title}</span>
                       {t.features?.length ? (
                         <span className="opacity-80 text-xs">
-                          feat{' '}
+                          feat.{' '}
                           {t.features.map((f, idx) => (
                             <span key={String(f.id)}>
                               <Link href={`/artist/${f.slug}`} className="underline">{f.name}</Link>
@@ -334,7 +370,7 @@ export default function ReleasePage() {
         )}
       </section>
 
-      {/* Staff review (best-effort) */}
+      {/* Staff review */}
       {review && (
         <section className="mt-8 rounded-xl border border-zinc-800 p-4">
           <div className="text-xs uppercase opacity-60 mb-1">Staff Review</div>
@@ -351,6 +387,12 @@ export default function ReleasePage() {
           ) : null}
         </section>
       )}
+
+      {/* Visitor comments */}
+      <section className="mt-8">
+        <h2 className="text-lg font-bold mb-3">Comments</h2>
+        <AlbumComments releaseId={rel.id} />
+      </section>
 
       <style jsx>{`
         .input { background:#0a0a0a; border:1px solid #27272a; border-radius:0.5rem; padding:0.5rem 0.75rem; color:#f4f4f5; outline:none; }
