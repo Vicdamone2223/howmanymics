@@ -1,3 +1,4 @@
+// src/app/login/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -20,7 +21,8 @@ export default function LoginPage() {
       try {
         setStatus('exchanging');
         setMsg('Signing you in…');
-        const { data, error } = await supabase.auth.exchangeCodeForSession({ code });
+        // Changed: pass string code instead of object
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
         if (error) throw error;
         if (data.session) {
           router.replace('/');
