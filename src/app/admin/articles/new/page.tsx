@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 
 function slugify(s = '') {
@@ -94,8 +95,9 @@ export default function NewArticlePage() {
       if (error) throw error;
       alert('Article created.');
       router.push('/admin/articles');
-    } catch (e: any) {
-      setErr(e.message || 'Could not create article.');
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Could not create article.';
+      setErr(message);
     } finally {
       setSaving(false);
     }
@@ -108,7 +110,7 @@ export default function NewArticlePage() {
     <main className="mx-auto max-w-3xl p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-extrabold">New Article</h1>
-        <a href="/admin/articles" className="text-sm opacity-80 hover:opacity-100 underline">← Back</a>
+        <Link href="/admin/articles" className="text-sm opacity-80 hover:opacity-100 underline">← Back</Link>
       </div>
 
       {err && <div className="mb-4 text-sm rounded-lg border border-red-800 bg-red-950/40 p-3 text-red-300">{err}</div>}

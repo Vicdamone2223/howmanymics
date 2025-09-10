@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import ReleasePicker from '@/components/ReleasePicker';
 
+type Status = 'confirmed' | 'likely' | 'tentative';
+
 type EventRow = {
   id: number;
   title: string;
@@ -34,7 +36,7 @@ export default function AdminCalendarPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [title, setTitle] = useState('');
   const [date, setDate] = useState('');
-  const [status, setStatus] = useState<'confirmed' | 'likely' | 'tentative'>('confirmed');
+  const [status, setStatus] = useState<Status>('confirmed');
 
   // link to existing release (and denormalized fields)
   const [releaseId, setReleaseId] = useState<number | null>(null);
@@ -152,7 +154,13 @@ export default function AdminCalendarPage() {
     setEditingId(r.id);
     setTitle(r.title || '');
     setDate(toISO(r.date) || '');
-    setStatus((r.status as any) || 'confirmed');
+    // Runtime-narrow status to our union
+    const s = r.status;
+    if (s === 'confirmed' || s === 'likely' || s === 'tentative') {
+      setStatus(s);
+    } else {
+      setStatus('confirmed');
+    }
     setReleaseId(r.release_id ?? null);
     setReleaseSlug(r.release_slug ?? null);
     setCoverUrl(r.cover_url ?? null);
@@ -238,7 +246,11 @@ export default function AdminCalendarPage() {
         <div className="md:col-span-2 flex items-center gap-3">
           <label className="inline-flex items-center gap-2 text-sm">
             <span className="opacity-70">Status:</span>
-            <select className="input" value={status} onChange={e => setStatus(e.target.value as any)}>
+            <select
+              className="input"
+              value={status}
+              onChange={e => setStatus(e.target.value as Status)}
+            >
               <option value="confirmed">Confirmed</option>
               <option value="likely">Likely</option>
               <option value="tentative">Tentative</option>
@@ -249,8 +261,11 @@ export default function AdminCalendarPage() {
             {editingId ? 'Save Changes' : 'Add Event'}
           </button>
           {editingId && (
-            <button type="button" className="text-xs px-3 py-2 rounded border border-zinc-700 hover:bg-zinc-900"
-              onClick={resetForm}>
+            <button
+              type="button"
+              className="text-xs px-3 py-2 rounded border border-zinc-700 hover:bg-zinc-900"
+              onClick={resetForm}
+            >
               Cancel
             </button>
           )}

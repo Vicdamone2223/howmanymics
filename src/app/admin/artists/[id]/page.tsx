@@ -91,8 +91,9 @@ export default function EditArtistPage() {
       if (upErr) throw upErr;
       const { data: pub } = supabase.storage.from('assets').getPublicUrl(path);
       if (pub?.publicUrl) setImg(pub.publicUrl);
-    } catch (e: any) {
-      alert(e.message || 'Upload failed');
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Upload failed';
+      alert(message);
     } finally {
       setUploading(false);
     }

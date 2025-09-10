@@ -81,15 +81,17 @@ export default function AccountPage() {
 
       const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
       if (pub?.publicUrl) setAvatarUrl(pub.publicUrl);
-    } catch (e: any) {
-      alert(e.message || 'Upload failed. Make sure the "avatars" bucket exists and is public.');
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : 'Upload failed. Make sure the "avatars" bucket exists and is public.';
+      alert(msg);
     }
   }
 
   if (loading) {
-    return (
-      <main className="mx-auto max-w-3xl px-4 py-8">Loading…</main>
-    );
+    return <main className="mx-auto max-w-3xl px-4 py-8">Loading…</main>;
   }
 
   if (!userId) {
@@ -97,9 +99,8 @@ export default function AccountPage() {
       <main className="mx-auto max-w-3xl px-4 py-8">
         <h1 className="text-2xl font-extrabold mb-2">My profile</h1>
         <p className="opacity-80">
-          You’re not signed in.{' '}
-          <Link href="/login" className="underline">Sign in</Link>
-          {' '}to edit your profile.
+          You’re not signed in. <Link href="/login" className="underline">Sign in</Link> to edit your
+          profile.
         </p>
       </main>
     );
@@ -127,7 +128,7 @@ export default function AccountPage() {
               type="file"
               accept="image/*"
               className="hidden"
-              onChange={(e) => {
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                 const f = e.target.files?.[0];
                 if (f) handleAvatarUpload(f);
               }}

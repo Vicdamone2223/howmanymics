@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 
 type U = {
@@ -9,14 +10,20 @@ type U = {
   slug: string;
   cover_url: string | null;
   release_date: string | null; // yyyy-mm-dd
-  status: 'confirmed'|'rumor'|'delayed';
+  status: 'confirmed' | 'rumor' | 'delayed';
   notes: string | null;
 };
 
-function slugify(s:string){return (s||'').toLowerCase().replace(/[^a-z0-9\s-]/g,'').trim().replace(/\s+/g,'-')}
+function slugify(s: string) {
+  return (s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-');
+}
 
 export default function EditUpcoming() {
-  const { id } = useParams<{id:string}>();
+  const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const isNew = id === 'new';
 
@@ -24,40 +31,47 @@ export default function EditUpcoming() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [row, setRow] = useState<U>({
-    title:'', slug:'', cover_url:'', release_date:'', status:'rumor', notes:''
+    title: '',
+    slug: '',
+    cover_url: '',
+    release_date: '',
+    status: 'rumor',
+    notes: '',
   });
 
-  useEffect(()=>{ (async()=>{
-    const { data: meAdmin } = await supabase.rpc('me_is_admin');
-    if (!meAdmin) { setOk(false); setLoading(false); return; }
-    setOk(true);
-    if (!isNew) {
-      const num = Number(id);
-      const { data } = await supabase.from('upcoming_albums').select('*').eq('id', num).single();
-      if (!data) { setErr('Not found'); setLoading(false); return; }
-      setRow({
-        id: data.id,
-        title: data.title,
-        slug: data.slug,
-        cover_url: data.cover_url,
-        release_date: data.release_date,
-        status: data.status,
-        notes: data.notes
-      });
-    }
-    setLoading(false);
-  })(); },[id,isNew]);
+  useEffect(() => {
+    (async () => {
+      const { data: meAdmin } = await supabase.rpc('me_is_admin');
+      if (!meAdmin) { setOk(false); setLoading(false); return; }
+      setOk(true);
+      if (!isNew) {
+        const num = Number(id);
+        const { data } = await supabase.from('upcoming_albums').select('*').eq('id', num).single();
+        if (!data) { setErr('Not found'); setLoading(false); return; }
+        setRow({
+          id: data.id,
+          title: data.title,
+          slug: data.slug,
+          cover_url: data.cover_url,
+          release_date: data.release_date,
+          status: data.status,
+          notes: data.notes,
+        });
+      }
+      setLoading(false);
+    })();
+  }, [id, isNew]);
 
-  const canSave = useMemo(()=>row.title.trim().length>0, [row.title]);
+  const canSave = useMemo(() => row.title.trim().length > 0, [row.title]);
 
-  async function save(e:React.FormEvent){
+  async function save(e: React.FormEvent) {
     e.preventDefault(); setErr(null);
     const payload = {
       ...row,
       slug: slugify(row.slug || row.title),
       cover_url: row.cover_url?.trim() || null,
       notes: row.notes || null,
-      release_date: row.release_date || null
+      release_date: row.release_date || null,
     };
     if (isNew) {
       const { data, error } = await supabase.from('upcoming_albums').insert(payload).select('id').single();
@@ -70,7 +84,7 @@ export default function EditUpcoming() {
     }
   }
 
-  async function destroy(){
+  async function destroy() {
     if (isNew || !row.id) return;
     if (!confirm('Delete this item?')) return;
     const { error } = await supabase.from('upcoming_albums').delete().eq('id', row.id);
@@ -93,19 +107,23 @@ export default function EditUpcoming() {
       {err && <div className="mb-4 text-sm rounded-lg border border-red-800 bg-red-950/40 p-3 text-red-300">{err}</div>}
 
       <form onSubmit={save} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <input className="input" placeholder="Title" value={row.title} onChange={e=>setRow(r=>({...r,title:e.target.value}))} required/>
-        <input className="input" placeholder="Slug" value={row.slug} onChange={e=>setRow(r=>({...r,slug:e.target.value}))}/>
-        <input className="input sm:col-span-2" placeholder="Cover URL" value={row.cover_url ?? ''} onChange={e=>setRow(r=>({...r,cover_url:e.target.value}))}/>
-        <input className="input" type="date" value={row.release_date ?? ''} onChange={e=>setRow(r=>({...r,release_date:e.target.value}))}/>
-        <select className="input" value={row.status} onChange={e=>setRow(r=>({...r,status:e.target.value as any}))}>
+        <input className="input" placeholder="Title" value={row.title} onChange={e => setRow(r => ({ ...r, title: e.target.value }))} required />
+        <input className="input" placeholder="Slug" value={row.slug} onChange={e => setRow(r => ({ ...r, slug: e.target.value }))} />
+        <input className="input sm:col-span-2" placeholder="Cover URL" value={row.cover_url ?? ''} onChange={e => setRow(r => ({ ...r, cover_url: e.target.value }))} />
+        <input className="input" type="date" value={row.release_date ?? ''} onChange={e => setRow(r => ({ ...r, release_date: e.target.value }))} />
+        <select
+          className="input"
+          value={row.status}
+          onChange={e => setRow(r => ({ ...r, status: e.target.value as U['status'] }))}
+        >
           <option value="confirmed">Confirmed</option>
           <option value="rumor">Rumor</option>
           <option value="delayed">Delayed</option>
         </select>
-        <textarea className="input sm:col-span-2 min-h-40" placeholder="Notes (optional)" value={row.notes ?? ''} onChange={e=>setRow(r=>({...r,notes:e.target.value}))}/>
+        <textarea className="input sm:col-span-2 min-h-40" placeholder="Notes (optional)" value={row.notes ?? ''} onChange={e => setRow(r => ({ ...r, notes: e.target.value }))} />
         <div className="sm:col-span-2 mt-2">
           <button className="btn" type="submit" disabled={!canSave}>Save</button>
-          <a href="/admin/calendar" className="ml-2 text-sm opacity-80 hover:opacity-100 underline">Back</a>
+          <Link href="/admin/calendar" className="ml-2 text-sm opacity-80 hover:opacity-100 underline">Back</Link>
         </div>
       </form>
 

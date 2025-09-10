@@ -5,7 +5,6 @@ import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
 
-
 type Row = {
   id?: number;
   kind: 'article' | 'review';
@@ -18,6 +17,8 @@ type Row = {
   published_at: string | null;
   featured_slider: boolean;
 };
+
+type DbArticle = Row & { id: number }; // ensured id is present when loading from DB
 
 function slugify(s: string) {
   return (s || '')
@@ -56,10 +57,14 @@ export default function EditArticlePage() {
 
       if (!isNew) {
         const num = Number(id);
-        let r: any = null;
+        let r: DbArticle | null = null;
         if (Number.isFinite(num)) {
-          const { data } = await supabase.from('articles').select('*').eq('id', num).single();
-          r = data;
+          const { data } = await supabase
+            .from('articles')
+            .select('*')
+            .eq('id', num)
+            .single<DbArticle>();
+          r = data ?? null;
         }
         if (!r) { setErr('Article not found'); setLoading(false); return; }
         setRow({
@@ -94,7 +99,7 @@ export default function EditArticlePage() {
     };
 
     if (isNew) {
-      const { data, error } = await supabase.from('articles').insert(payload).select('id').single();
+      const { data, error } = await supabase.from('articles').insert(payload).select('id').single<{ id: number }>();
       if (error) { setErr(error.message); return; }
       alert('Article created'); router.push(`/admin/articles/${data!.id}`);
     } else {
@@ -130,29 +135,43 @@ export default function EditArticlePage() {
       {err && <div className="mb-4 text-sm rounded-lg border border-red-800 bg-red-950/40 p-3 text-red-300">{err}</div>}
 
       <form onSubmit={save} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <select className="input" value={row.kind} onChange={e=>setRow(r=>({ ...r, kind: e.target.value as any }))}>
+        <select
+          className="input"
+          value={row.kind}
+          onChange={(e) => setRow((r) => ({ ...r, kind: e.target.value as Row['kind'] }))}
+        >
           <option value="article">Article</option>
           <option value="review">Review</option>
         </select>
 
         <label className="inline-flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={row.featured_slider} onChange={e=>setRow(r=>({ ...r, featured_slider: e.target.checked }))}/>
+          <input
+            type="checkbox"
+            checked={row.featured_slider}
+            onChange={(e) => setRow((r) => ({ ...r, featured_slider: e.target.checked }))}
+          />
           Feature in homepage slider
         </label>
 
-        <input className="input" placeholder="Title" value={row.title} onChange={e=>setRow(r=>({ ...r, title: e.target.value }))} required />
-        <input className="input" placeholder="Slug" value={row.slug} onChange={e=>setRow(r=>({ ...r, slug: e.target.value }))} />
+        <input className="input" placeholder="Title" value={row.title} onChange={(e) => setRow((r) => ({ ...r, title: e.target.value }))} required />
+        <input className="input" placeholder="Slug" value={row.slug} onChange={(e) => setRow((r) => ({ ...r, slug: e.target.value }))} />
 
-        <input className="input sm:col-span-2" placeholder="Cover URL" value={row.cover_url ?? ''} onChange={e=>setRow(r=>({ ...r, cover_url: e.target.value }))} />
-        <input className="input sm:col-span-2" placeholder="Author" value={row.author ?? ''} onChange={e=>setRow(r=>({ ...r, author: e.target.value }))} />
-        <input className="input" type="datetime-local"
-          value={row.published_at ? new Date(row.published_at).toISOString().slice(0,16) : ''}
-          onChange={e=>setRow(r=>({ ...r, published_at: e.target.value }))}
+        <input className="input sm:col-span-2" placeholder="Cover URL" value={row.cover_url ?? ''} onChange={(e) => setRow((r) => ({ ...r, cover_url: e.target.value }))} />
+        <input className="input sm:col-span-2" placeholder="Author" value={row.author ?? ''} onChange={(e) => setRow((r) => ({ ...r, author: e.target.value }))} />
+        <input
+          className="input"
+          type="datetime-local"
+          value={row.published_at ? new Date(row.published_at).toISOString().slice(0, 16) : ''}
+          onChange={(e) => setRow((r) => ({ ...r, published_at: e.target.value }))}
         />
-        <input className="input" placeholder="Excerpt" value={row.excerpt ?? ''} onChange={e=>setRow(r=>({ ...r, excerpt: e.target.value }))} />
+        <input className="input" placeholder="Excerpt" value={row.excerpt ?? ''} onChange={(e) => setRow((r) => ({ ...r, excerpt: e.target.value }))} />
 
-        <textarea className="input sm:col-span-2 min-h-64" placeholder="Body (markdown or plain text)"
-          value={row.body ?? ''} onChange={e=>setRow(r=>({ ...r, body: e.target.value }))} />
+        <textarea
+          className="input sm:col-span-2 min-h-64"
+          placeholder="Body (markdown or plain text)"
+          value={row.body ?? ''}
+          onChange={(e) => setRow((r) => ({ ...r, body: e.target.value }))}
+        />
 
         <div className="sm:col-span-2 mt-2">
           <button className="btn" type="submit" disabled={!canSave}>Save</button>

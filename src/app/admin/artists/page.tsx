@@ -14,6 +14,11 @@ type Artist = {
   rating_staff: number | null | string; // allow free typing
 };
 
+type UpdatePayload = {
+  rating_staff?: number | null;
+  staff_rank?: number | null;
+};
+
 export default function ManageArtistsPage() {
   const [ok, setOk] = useState<boolean | null>(null);
   const [rows, setRows] = useState<Artist[]>([]);
@@ -71,14 +76,14 @@ export default function ManageArtistsPage() {
       staffScore = Number.isFinite(parsed) ? Math.max(50, Math.min(100, parsed)) : null;
     }
 
-    const payload: any = {};
+    const payload: UpdatePayload = {};
     if (rating_staff !== undefined) payload.rating_staff = staffScore;
     if (staff_rank !== undefined) payload.staff_rank = staff_rank;
 
     const { error } = await supabase.from('artists').update(payload).eq('id', id);
     if (error) { alert(error.message); return false; }
 
-    setRows(prev => prev.map(r => (r.id === id ? { ...r, ...payload } as Artist : r)));
+    setRows(prev => prev.map(r => (r.id === id ? { ...r, ...payload } : r)));
     return true;
   }
 
@@ -240,7 +245,7 @@ export default function ManageArtistsPage() {
                           value={a.staff_rank ?? ''}
                           onChange={e => {
                             const v = e.target.value === '' ? null : parseInt(e.target.value, 10);
-                            setRows(prev => prev.map(r => r.id === a.id ? { ...r, staff_rank: v as any } : r));
+                            setRows(prev => prev.map(r => r.id === a.id ? { ...r, staff_rank: v } : r));
                           }}
                         />
                       </label>
@@ -252,7 +257,7 @@ export default function ManageArtistsPage() {
                             updateArtist({
                               id: a.id,
                               rating_staff: a.rating_staff,
-                              staff_rank: a.staff_rank as number | null
+                              staff_rank: a.staff_rank
                             })
                           }
                         >
