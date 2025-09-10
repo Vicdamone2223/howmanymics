@@ -137,9 +137,8 @@ function YouTubeBlock({ id }: { id: string }) {
 
 function TwitterEmbed({ url }: { url: string }) {
   useEffect(() => {
-    // Ask Twitter to (re)render
-    // @ts-expect-error twttr global may exist
-    window?.twttr?.widgets?.load?.();
+    // Ask Twitter/X to (re)render if their script is present
+    (window as any)?.twttr?.widgets?.load?.();
   }, [url]);
 
   return (
@@ -153,9 +152,8 @@ function TwitterEmbed({ url }: { url: string }) {
 
 function InstagramEmbed({ url }: { url: string }) {
   useEffect(() => {
-    // Ask Instagram to (re)render
-    // @ts-expect-error instgrm global may exist
-    window?.instgrm?.Embeds?.process?.();
+    // Ask Instagram to (re)render embeds if their script is present
+    (window as any)?.instgrm?.Embeds?.process?.();
   }, [url]);
 
   return (
