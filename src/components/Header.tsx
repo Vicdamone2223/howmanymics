@@ -17,15 +17,17 @@ export default function Header() {
   const [q, setQ] = useState('');
   const [email, setEmail] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  const [navOpen, setNavOpen] = useState(false);     // mobile nav
-  const [menuOpen, setMenuOpen] = useState(false);   // avatar menu
+  // mobile / menu state
+  const [navOpen, setNavOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    let sub: ReturnType<typeof supabase.auth.onAuthStateChange> | null = null;
+    let authSub: ReturnType<typeof supabase.auth.onAuthStateChange> | null = null;
 
-    (async () => {
+    async function hydrateFromSession() {
       const { data } = await supabase.auth.getSession();
       const u = data.session?.user || null;
       setEmail(u?.email ?? null);
@@ -37,24 +39,44 @@ export default function Header() {
           .eq('id', u.id)
           .single();
         if (p) setProfile(p as Profile);
+      } else {
+        setProfile(null);
       }
 
-      sub = supabase.auth.onAuthStateChange((_evt, sess) => {
-        const user = sess?.user || null;
-        setEmail(user?.email ?? null);
-        setProfile(null);
-        if (user?.id) {
-          supabase
-            .from('profiles')
-            .select('display_name,username,avatar_url')
-            .eq('id', user.id)
-            .single()
-            .then(({ data: p }) => p && setProfile(p as Profile));
-        }
-      });
-    })();
+      // Check admin flag via RPC
+      try {
+        const { data: isAdm, error } = await supabase.rpc('me_is_admin');
+        setIsAdmin(Boolean(isAdm) && !error);
+      } catch {
+        setIsAdmin(false);
+      }
+    }
 
-    // click outside to close the avatar menu
+    hydrateFromSession();
+
+    authSub = supabase.auth.onAuthStateChange(async (_evt, sess) => {
+      const user = sess?.user || null;
+      setEmail(user?.email ?? null);
+      setProfile(null);
+
+      if (user?.id) {
+        supabase
+          .from('profiles')
+          .select('display_name,username,avatar_url')
+          .eq('id', user.id)
+          .single()
+          .then(({ data: p }) => p && setProfile(p as Profile));
+      }
+
+      try {
+        const { data: isAdm, error } = await supabase.rpc('me_is_admin');
+        setIsAdmin(Boolean(isAdm) && !error);
+      } catch {
+        setIsAdmin(false);
+      }
+    });
+
+    // close avatar menu when clicking outside
     const onDoc = (e: MouseEvent) => {
       if (!menuRef.current) return;
       if (!menuRef.current.contains(e.target as Node)) setMenuOpen(false);
@@ -62,7 +84,7 @@ export default function Header() {
     document.addEventListener('mousedown', onDoc);
 
     return () => {
-      sub?.data.subscription.unsubscribe();
+      authSub?.data.subscription.unsubscribe();
       document.removeEventListener('mousedown', onDoc);
     };
   }, []);
@@ -71,6 +93,7 @@ export default function Header() {
     await supabase.auth.signOut();
     setMenuOpen(false);
     setNavOpen(false);
+    setIsAdmin(false);
     router.refresh();
   }
 
@@ -86,10 +109,10 @@ export default function Header() {
     { href: '/calendar', label: 'Calendar' },
     { href: '/debates', label: 'Debates' },
     { href: '/today', label: 'Today in Hip-Hop' },
-  ];
+  ] as const;
 
   return (
-    <header className="sticky top-0 z-50 border-b border-zinc-200 bg-white/70 backdrop-blur supports-[backdrop-filter]:bg-white/60 text-zinc-900">
+    <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/80 text-zinc-900 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/60">
       <div className="mx-auto max-w-6xl px-4 py-2 flex items-center gap-3">
         <Link href="/" className="flex items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -113,7 +136,7 @@ export default function Header() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search artists, albums…"
-            className="w-full rounded-lg border border-zinc-300 bg-white/80 backdrop-blur px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-500"
+            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-500"
           />
         </form>
 
@@ -131,7 +154,7 @@ export default function Header() {
                 onClick={() => setMenuOpen((v) => !v)}
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
-                className="h-9 w-9 rounded-full border border-zinc-300 bg-white/80 backdrop-blur hover:bg-white grid place-items-center overflow-hidden"
+                className="h-9 w-9 rounded-full border border-zinc-300 bg-white hover:bg-zinc-50 grid place-items-center overflow-hidden"
               >
                 {avatarSrc ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -144,7 +167,7 @@ export default function Header() {
               {menuOpen && (
                 <div
                   role="menu"
-                  className="absolute right-0 top-11 w-44 rounded-lg border border-zinc-200 bg-white/90 backdrop-blur shadow-md p-1 text-sm"
+                  className="absolute right-0 top-11 w-44 rounded-lg border border-zinc-200 bg-white shadow-md p-1 text-sm"
                 >
                   <Link
                     role="menuitem"
@@ -162,14 +185,19 @@ export default function Header() {
                   >
                     Settings
                   </Link>
-                  <Link
-                    role="menuitem"
-                    href="/admin"
-                    className="block rounded px-3 py-2 hover:bg-zinc-50"
-                    onClick={() => setMenuOpen(false)}
-                  >
-                    Admin
-                  </Link>
+
+                  {/* Admin only */}
+                  {isAdmin && (
+                    <Link
+                      role="menuitem"
+                      href="/admin"
+                      className="block rounded px-3 py-2 hover:bg-zinc-50"
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      Admin
+                    </Link>
+                  )}
+
                   <button
                     role="menuitem"
                     onClick={signOut}
@@ -183,13 +211,13 @@ export default function Header() {
           )}
         </div>
 
-        {/* Mobile: fancy menu button */}
+        {/* Mobile: menu button */}
         <button
           type="button"
           aria-label={navOpen ? 'Close menu' : 'Open menu'}
           aria-expanded={navOpen}
           onClick={() => setNavOpen((v) => !v)}
-          className="md:hidden ml-auto h-11 w-11 rounded-full border border-zinc-300 bg-white/80 backdrop-blur hover:bg-white shadow-sm grid place-items-center"
+          className="md:hidden ml-auto h-11 w-11 rounded-full border border-zinc-300 bg-white hover:bg-zinc-50 shadow-sm grid place-items-center"
         >
           {!navOpen ? (
             <svg width="22" height="22" viewBox="0 0 24 24" className="opacity-90">
@@ -210,7 +238,7 @@ export default function Header() {
 
       {/* Mobile panel */}
       {navOpen && (
-        <div className="md:hidden border-t border-zinc-200 bg-white/90 backdrop-blur">
+        <div className="md:hidden border-t border-zinc-200 bg-white/95 backdrop-blur">
           <div className="mx-auto max-w-6xl px-4 py-3 space-y-3">
             {/* Search (mobile) */}
             <form action="/search">
@@ -260,13 +288,18 @@ export default function Header() {
                   >
                     Settings
                   </Link>
-                  <Link
-                    href="/admin"
-                    onClick={() => setNavOpen(false)}
-                    className="rounded-lg border border-zinc-200 px-3 py-2 hover:bg-zinc-50"
-                  >
-                    Admin
-                  </Link>
+
+                  {/* Admin only */}
+                  {isAdmin && (
+                    <Link
+                      href="/admin"
+                      onClick={() => setNavOpen(false)}
+                      className="rounded-lg border border-zinc-200 px-3 py-2 hover:bg-zinc-50"
+                    >
+                      Admin
+                    </Link>
+                  )}
+
                   <button
                     onClick={signOut}
                     className="rounded-lg border border-zinc-200 px-3 py-2 hover:bg-zinc-50 text-left"

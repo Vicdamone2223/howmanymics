@@ -5,298 +5,274 @@ import { useEffect, useMemo, useState } from 'react';
 import { notFound, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
-import SimilarAlbums from '@/components/SimilarAlbums';
-import AlbumReviews from '@/components/AlbumReviews';
-import AlbumComments from '@/components/AlbumComments';
-import YouTubeEmbed from '@/components/YouTubeEmbed';
 
-type Artist = { id:number|string; name:string; slug:string };
-type TrackRow = { id:string; track_no:number; title:string; duration_seconds:number|null };
-type TrackArtist = { track_id:string; artist_id:number; role:'primary'|'feature'|'producer' };
-
-type Release = {
+type ReleaseRow = {
   id: number | string;
   title: string;
   slug: string;
-  artist_id: number | string;
-  year: number | null;
   cover_url: string | null;
-  producers?: string[] | null;
-  labels?: string[] | null;
-  youtube_id?: string | null;
-  rating_staff?: number | null;
-
-  // legacy/optional fields
-  tracks?: any;
-  is_double_album?: boolean | null;
-  tracks_disc1?: any;
-  tracks_disc2?: any;
-
-  // RIAA legacy variants
-  riaa_albums_sold?: number | null;
-  riaa_certification?: string | null;
-  riaa_cert?: string | null;
+  year: number | null;
+  rating_staff: number | null;
+  is_double_album: boolean | null;
+  tracks_disc1: string[] | null;
+  tracks_disc2: string[] | null;
+  release_ratings?: { rating: number }[];
 };
+
+type MyRating = { id: string; rating: number };
 
 export default function ReleasePage() {
   const { slug } = useParams<{ slug: string }>();
 
   const [loading, setLoading] = useState(true);
-  const [rel, setRel] = useState<Release | null>(null);
-  const [artist, setArtist] = useState<Artist | null>(null);
-  const [tracks, setTracks] = useState<TrackRow[] | null>(null);
-  const [featuresByTrack, setFeaturesByTrack] = useState<Record<string, Artist[]>>({});
-  const [peopleAvg, setPeopleAvg] = useState<number | null>(null); // for fire emoji
+  const [row, setRow] = useState<ReleaseRow | null>(null);
+
+  const [sessionEmail, setSessionEmail] = useState<string | null>(null);
+  const [myRating, setMyRating] = useState<MyRating | null>(null);
+  const [inputRating, setInputRating] = useState<string>('');
+  const [peopleAvg, setPeopleAvg] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     (async () => {
+      // session
+      const { data: sess } = await supabase.auth.getSession();
+      const email = sess.session?.user?.email ?? null;
+      setSessionEmail(email);
+
       // release
-      const { data: r, error: rErr } = await supabase
+      const { data, error } = await supabase
         .from('releases')
-        .select('*')
+        .select(
+          'id,title,slug,cover_url,year,rating_staff,is_double_album,tracks_disc1,tracks_disc2,release_ratings(rating)'
+        )
         .eq('slug', slug)
         .single();
 
-      if (rErr || !r) {
+      if (error || !data) {
         setLoading(false);
-        setRel(null);
+        setRow(null);
         return;
       }
-      setRel(r as Release);
 
-      // artist
-      const { data: a } = await supabase
-        .from('artists')
-        .select('id,name,slug')
-        .eq('id', r.artist_id)
-        .single();
-      if (a) setArtist(a as Artist);
+      const rel = data as ReleaseRow;
+      setRow(rel);
 
-      // normalized tracks
-      const { data: trows } = await supabase
-        .from('tracks')
-        .select('id,track_no,title,duration_seconds')
-        .eq('release_id', r.id)
-        .order('track_no', { ascending: true });
+      // compute public People average from joined ratings
+      const ratings = Array.isArray(rel.release_ratings) ? rel.release_ratings : [];
+      const nums = ratings.map((x) => Number(x.rating)).filter((n) => Number.isFinite(n));
+      setPeopleAvg(nums.length ? Math.round(nums.reduce((s, n) => s + n, 0) / nums.length) : null);
 
-      if (trows && trows.length) {
-        setTracks(trows as TrackRow[]);
-        const trackIds = trows.map((t) => t.id);
+      // load MY rating (RLS should scope to current user)
+      if (email) {
+        const { data: mine } = await supabase
+          .from('release_ratings')
+          .select('id,rating')
+          .eq('release_id', rel.id)
+          .limit(1);
 
-        const { data: tas } = await supabase
-          .from('track_artists')
-          .select('track_id,artist_id,role')
-          .in('track_id', trackIds);
-
-        const feats = (tas || []).filter((x) => x.role === 'feature') as TrackArtist[];
-        if (feats.length) {
-          const ids = Array.from(new Set(feats.map((f) => f.artist_id)));
-          const { data: arts } = await supabase
-            .from('artists')
-            .select('id,name,slug')
-            .in('id', ids);
-
-          const map = new Map<number, Artist>();
-          (arts || []).forEach((a2) => map.set(Number(a2.id), a2 as Artist));
-
-          const by: Record<string, Artist[]> = {};
-          for (const f of feats) {
-            const a2 = map.get(Number(f.artist_id));
-            if (!a2) continue;
-            if (!by[f.track_id]) by[f.track_id] = [];
-            by[f.track_id].push(a2);
-          }
-          setFeaturesByTrack(by);
+        if (mine?.length) {
+          setMyRating({ id: mine[0].id as unknown as string, rating: mine[0].rating as number });
+          setInputRating(String(mine[0].rating));
+        } else {
+          setMyRating(null);
+          setInputRating('');
         }
-      } else {
-        setTracks(null);
-      }
-
-      // people avg for this release (from release_ratings)
-      const { data: rr } = await supabase
-        .from('release_ratings')
-        .select('rating')
-        .eq('release_id', r.id);
-
-      if (rr && rr.length) {
-        const nums = rr.map((x: any) => Number(x.rating)).filter((n) => Number.isFinite(n));
-        const avg = nums.length ? Math.round(nums.reduce((s: number, n: number) => s + n, 0) / nums.length) : null;
-        setPeopleAvg(avg);
-      } else {
-        setPeopleAvg(null);
       }
 
       setLoading(false);
     })();
   }, [slug]);
 
-  const riaaText = useMemo(() => {
-    if (!rel) return '';
-    const cert = (rel.riaa_certification ?? rel.riaa_cert ?? '') as string;
-    const units =
-      rel.riaa_albums_sold != null ? ` (${Number(rel.riaa_albums_sold).toLocaleString()} units)` : '';
-    return (cert + units).trim();
-  }, [rel]);
+  const overallScore = useMemo(() => {
+    const staff = row?.rating_staff ?? null;
+    const ppl = peopleAvg ?? null;
+    if (staff == null && ppl == null) return null;
+    if (staff != null && ppl == null) return Math.round(staff);
+    if (staff == null && ppl != null) return Math.round(ppl);
+    return Math.round(0.5 * Number(staff) + 0.5 * Number(ppl));
+  }, [row?.rating_staff, peopleAvg]);
+
+  async function refreshPeopleAvg(releaseId: number | string) {
+    // re-fetch just the ratings to recompute avg (public read)
+    const { data } = await supabase
+      .from('release_ratings')
+      .select('rating')
+      .eq('release_id', releaseId);
+    const nums = (data || []).map((r: any) => Number(r.rating)).filter(Number.isFinite);
+    setPeopleAvg(nums.length ? Math.round(nums.reduce((s: number, n: number) => s + n, 0) / nums.length) : null);
+  }
+
+  async function submitRating(e: React.FormEvent) {
+    e.preventDefault();
+    if (!row) return;
+    const parsed = parseInt(inputRating, 10);
+    const clamped = Number.isFinite(parsed) ? Math.max(50, Math.min(100, parsed)) : NaN;
+    if (Number.isNaN(clamped)) return alert('Please enter a number from 50 to 100.');
+
+    setSaving(true);
+    try {
+      if (myRating) {
+        const { error } = await supabase
+          .from('release_ratings')
+          .update({ rating: clamped })
+          .eq('id', myRating.id);
+        if (error) throw error;
+        setMyRating({ id: myRating.id, rating: clamped });
+      } else {
+        const { data, error } = await supabase
+          .from('release_ratings')
+          .insert({ release_id: row.id, rating: clamped })
+          .select('id,rating')
+          .single();
+        if (error) throw error;
+        setMyRating({ id: data.id, rating: data.rating });
+      }
+      await refreshPeopleAvg(row.id);
+      alert('Saved your rating.');
+    } catch (err: any) {
+      alert(err?.message || 'Could not save rating.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeMyRating() {
+    if (!row || !myRating) return;
+    if (!confirm('Remove your rating?')) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase.from('release_ratings').delete().eq('id', myRating.id);
+      if (error) throw error;
+      setMyRating(null);
+      setInputRating('');
+      await refreshPeopleAvg(row.id);
+    } catch (err: any) {
+      alert(err?.message || 'Could not remove rating.');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   if (loading) return <main className="mx-auto max-w-6xl px-4 py-8">Loading…</main>;
-  if (!rel) notFound();
-
-  // Legacy fallbacks (support either tracks_disc1 or old tracks array)
-  const legacyDisc1: string[] =
-    Array.isArray((rel as any).tracks_disc1)
-      ? (rel as any).tracks_disc1
-      : Array.isArray(rel.tracks)
-      ? (rel.tracks as any)
-      : [];
-  const legacyDisc2: string[] = Array.isArray((rel as any).tracks_disc2)
-    ? (rel as any).tracks_disc2
-    : [];
-  const hasDisc2Legacy = !!rel.is_double_album && legacyDisc2.length > 0;
+  if (!row) notFound();
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
-      {/* Top */}
-      <div className="flex flex-col md:flex-row gap-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start gap-5">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={rel.cover_url || '/placeholder/cover1.jpg'}
-          alt={rel.title}
-          className="w-56 h-56 rounded-xl object-cover border border-zinc-800"
+          src={row.cover_url || '/placeholder/cover1.jpg'}
+          alt={row.title}
+          className="h-44 w-44 rounded-xl object-cover border border-zinc-800"
         />
         <div className="flex-1">
-          <h1 className="text-3xl font-extrabold">{rel.title}</h1>
-          <div className="mt-2 text-sm opacity-80">
-            {artist ? (
-              <a href={`/artist/${artist.slug}`} className="hover:underline">
-                {artist.name}
-              </a>
-            ) : (
-              <span>Unknown artist</span>
+          <h1 className="text-3xl font-extrabold">{row.title}</h1>
+          <div className="mt-1 text-sm opacity-80">{row.year ?? '—'}</div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            {row.rating_staff != null && (
+              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
+                <span role="img" aria-label="mic">🎙️</span>
+                Staff <strong className="tabular-nums">{row.rating_staff}</strong>
+              </span>
             )}
-            {rel.year && <span> • {rel.year}</span>}
+            {peopleAvg != null && (
+              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
+                <span role="img" aria-label="fire">🔥</span>
+                People <strong className="tabular-nums">{peopleAvg}</strong>
+              </span>
+            )}
+            {overallScore != null && (
+              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
+                Overall <strong className="tabular-nums">{overallScore}</strong>
+              </span>
+            )}
           </div>
 
-          <MetaLine label="Producers" values={rel.producers || null} />
-          <MetaLine label="Labels" values={rel.labels || null} />
-
-          {riaaText && (
-            <div className="mt-3 text-sm">
-              <span className="opacity-70 mr-2">RIAA:</span>
-              <span className="opacity-90">{riaaText}</span>
-            </div>
-          )}
-
-          {/* Ratings row for album: 🎙️ staff + 🔥 people */}
-          {(rel.rating_staff != null || peopleAvg != null) && (
-            <div className="mt-3 flex items-center gap-2 text-sm">
-              {rel.rating_staff != null && (
-                <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
-                  <span role="img" aria-label="mic">🎙️</span>
-                  <strong className="tabular-nums">{rel.rating_staff}</strong>
-                </span>
+          {/* Rate box */}
+          {sessionEmail ? (
+            <form onSubmit={submitRating} className="mt-4 flex items-center gap-2">
+              <input
+                type="number"
+                inputMode="numeric"
+                className="input w-28"
+                placeholder="Rate 50–100"
+                value={inputRating}
+                onChange={(e) => setInputRating(e.target.value)}
+              />
+              <button className="btn" disabled={saving} type="submit">
+                {myRating ? 'Update' : 'Submit'}
+              </button>
+              {myRating && (
+                <button
+                  type="button"
+                  onClick={removeMyRating}
+                  className="text-xs px-3 py-2 rounded border border-zinc-700 hover:bg-zinc-900"
+                  disabled={saving}
+                >
+                  Remove
+                </button>
               )}
-              {peopleAvg != null && (
-                <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
-                  <span role="img" aria-label="fire">🔥</span>
-                  <strong className="tabular-nums">{peopleAvg}</strong>
-                </span>
-              )}
+            </form>
+          ) : (
+            <div className="mt-3 text-xs opacity-75">
+              <Link href="/login" className="underline">Sign in</Link> to rate this album.
             </div>
           )}
         </div>
       </div>
 
-      {/* YouTube */}
-      {rel.youtube_id && (
-        <section className="mt-8">
-          <YouTubeEmbed input={rel.youtube_id} title={`${rel.title} — YouTube`} />
+      {/* Tracklists */}
+      {(row.tracks_disc1?.length || row.tracks_disc2?.length) && (
+        <section className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+          {row.tracks_disc1?.length ? (
+            <div>
+              <h3 className="text-sm font-semibold mb-2">Disc 1</h3>
+              <ol className="space-y-1">
+                {row.tracks_disc1.map((t, i) => (
+                  <li key={`d1-${i}`} className="flex items-start gap-2">
+                    <span className="w-6 text-xs opacity-70 tabular-nums">{i + 1}.</span>
+                    <span>{t}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
+
+          {row.is_double_album && row.tracks_disc2?.length ? (
+            <div>
+              <h3 className="text-sm font-semibold mb-2">Disc 2</h3>
+              <ol className="space-y-1">
+                {row.tracks_disc2.map((t, i) => (
+                  <li key={`d2-${i}`} className="flex items-start gap-2">
+                    <span className="w-6 text-xs opacity-70 tabular-nums">{i + 1}.</span>
+                    <span>{t}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
         </section>
       )}
 
-      {/* Tracklists */}
-      <section className="mt-8">
-        <h2 className="text-lg font-bold mb-3">Tracklist</h2>
-
-        {/* Prefer normalized tracks */}
-        {Array.isArray(tracks) && tracks.length > 0 ? (
-          <ol className="list-decimal list-inside grid gap-2">
-            {tracks.map((t) => (
-              <li key={t.id} className="opacity-90">
-                <div className="flex flex-col sm:flex-row sm:items-baseline sm:gap-2">
-                  <span className="font-medium">{t.title}</span>
-                  {featuresByTrack[t.id]?.length ? (
-                    <span className="text-xs opacity-75">
-                      • feat{' '}
-                      {featuresByTrack[t.id].map((fa, i) => (
-                        <Link key={fa.slug} className="hover:underline" href={`/artist/${fa.slug}`}>
-                          {fa.name}
-                          {i < featuresByTrack[t.id].length - 1 ? ', ' : ''}
-                        </Link>
-                      ))}
-                    </span>
-                  ) : null}
-                </div>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <>
-            {!legacyDisc1.length ? (
-              <p className="opacity-70 text-sm">No tracks added yet.</p>
-            ) : (
-              <>
-                {hasDisc2Legacy && <div className="text-sm opacity-70 mb-2">Disc One</div>}
-                <ol className="list-decimal list-inside grid gap-1 mb-4">
-                  {legacyDisc1.map((t, i) => (
-                    <li key={`d1-${i}`} className="opacity-90">
-                      {t}
-                    </li>
-                  ))}
-                </ol>
-              </>
-            )}
-
-            {hasDisc2Legacy && (
-              <>
-                <div className="text-sm opacity-70 mb-2 mt-4">Disc Two</div>
-                <ol className="list-decimal list-inside grid gap-1">
-                  {legacyDisc2.map((t, i) => (
-                    <li key={`d2-${i}`} className="opacity-90">
-                      {t}
-                    </li>
-                  ))}
-                </ol>
-              </>
-            )}
-          </>
-        )}
-      </section>
-
-      {/* Similar + Reviews + Comments */}
-      <section className="mt-10">
-        <h3 className="text-lg font-bold mb-3">You might also like</h3>
-        <SimilarAlbums releaseId={rel.id} />
-      </section>
-
-      <section className="mt-10">
-        <h3 className="text-lg font-bold mb-3">Staff Review</h3>
-        <AlbumReviews releaseId={rel.id} />
-      </section>
-
-      <section className="mt-10">
-        <h3 className="text-lg font-bold mb-3">Comments</h3>
-        <AlbumComments releaseId={rel.id} />
-      </section>
+      <style jsx>{`
+        .input {
+          background: #0a0a0a;
+          border: 1px solid #27272a;
+          border-radius: 0.5rem;
+          padding: 0.5rem 0.75rem;
+          color: #f4f4f5;
+          outline: none;
+        }
+        .input::placeholder { color: #a1a1aa; }
+        .input:focus { box-shadow: 0 0 0 2px rgba(249,115,22,0.35); }
+        .btn {
+          background: #f97316; color: #000; font-weight: 700;
+          border-radius: 0.5rem; padding: 0.55rem 0.9rem;
+        }
+      `}</style>
     </main>
-  );
-}
-
-function MetaLine({ label, values }: { label: string; values: string[] | null }) {
-  if (!values || values.length === 0) return null;
-  return (
-    <div className="mt-3 text-sm">
-      <span className="opacity-70 mr-2">{label}:</span>
-      <span className="opacity-90">{values.join(', ')}</span>
-    </div>
   );
 }
