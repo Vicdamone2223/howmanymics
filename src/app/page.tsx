@@ -11,6 +11,7 @@ import TopOfYear from '@/components/TopOfYear';
 import TodayInHipHopWidget from '@/components/TodayInHipHopWidget';
 import DebateSpotlight from '@/components/DebateSpotlight';
 import ListsRail from '@/components/ListsRail';
+import VerseOfMonth from '@/components/VerseOfMonth'; // ⟵ NEW
 
 import type {
   AlbumYearRow,
@@ -98,9 +99,7 @@ export default function Home() {
       try {
         const { data, error } = await supabase
           .from('articles')
-          .select(
-            'id,title,slug,cover_url,excerpt,dek,kind,published_at'
-          )
+          .select('id,title,slug,cover_url,excerpt,dek,kind,published_at')
           .not('published_at', 'is', null)
           .in('kind', ['article', 'review'])
           .order('published_at', { ascending: false })
@@ -147,15 +146,15 @@ export default function Home() {
               ? pplNums.reduce((sum: number, n: number) => sum + n, 0) / pplNums.length
               : null;
 
-          const staff = r.rating_staff ?? null;
-          const overall =
-            staff == null && peopleAvg == null
-              ? null
-              : staff != null && peopleAvg == null
-              ? staff
-              : staff == null && peopleAvg != null
-              ? Math.round(peopleAvg)
-              : Math.round(0.5 * Number(staff) + 0.5 * Number(peopleAvg));
+        const staff = r.rating_staff ?? null;
+        const overall =
+          staff == null && peopleAvg == null
+            ? null
+            : staff != null && peopleAvg == null
+            ? staff
+            : staff == null && peopleAvg != null
+            ? Math.round(peopleAvg)
+            : Math.round(0.5 * Number(staff) + 0.5 * Number(peopleAvg));
 
           return {
             rank: 0,
@@ -229,7 +228,7 @@ export default function Home() {
   return (
     <main className="mx-auto max-w-[1400px] px-4 py-4">
       {/* Only render when real data arrives (prevents placeholder flash) */}
-      {news !== null && <NewsSlider items={news} autoPlayMs={5000} />}
+      {news !== null && <NewsSlider items={news as NewsItem[]} />}
 
       <GoatTicker limit={15} />
       <TopOfYear items={topYear} year={year} />
@@ -240,6 +239,9 @@ export default function Home() {
       <TodayInHipHopWidget items={today} />
       <DebateSpotlight debate={debate} />
       <ListsRail items={[]} />
+
+      {/* NEW: Verse of the Month (pulls latest from Supabase) */}
+      <VerseOfMonth />
     </main>
   );
 }
