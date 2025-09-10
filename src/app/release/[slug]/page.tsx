@@ -5,22 +5,21 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { notFound, useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-import YouTubeEmbed from '@/components/YouTubeEmbed';
-import AlbumComments from '@/components/AlbumComments';
 
 type ReleaseRow = {
   id: number;
+  artist_id: number | string;          // ← added
   title: string;
   slug: string;
   cover_url: string | null;
   year: number | null;
   producers: string[] | null;
   labels: string[] | null;
-  youtube_id: string | null;     // can be full url or bare id
+  youtube_id: string | null;
   riaa_cert: string | null;
   rating_staff: number | null;
-  tracks_disc1: string[] | null; // legacy fallback
-  tracks_disc2: string[] | null; // legacy fallback
+  tracks_disc1: string[] | null;       // legacy fallback
+  tracks_disc2: string[] | null;       // legacy fallback
 };
 
 type TrackRow = {
@@ -64,11 +63,11 @@ export default function ReleasePage() {
       const { data: sess } = await supabase.auth.getSession();
       setSessionEmail(sess.session?.user?.email ?? null);
 
-      // 1) Load release
+      // 1) Release (include artist_id so we can filter features)
       const { data: rData, error: rErr } = await supabase
         .from('releases')
         .select(
-          'id,title,slug,cover_url,year,producers,labels,youtube_id,riaa_cert,rating_staff,tracks_disc1,tracks_disc2'
+          'id,artist_id,title,slug,cover_url,year,producers,labels,youtube_id,riaa_cert,rating_staff,tracks_disc1,tracks_disc2'
         )
         .eq('slug', slug)
         .single();
@@ -87,22 +86,26 @@ export default function ReleasePage() {
       try {
         const { data: vData, error: vErr } = await supabase
           .from('v_tracks_with_features')
-          .select('disc_no,track_no,title,duration_seconds,features,release_id')
+          .select('disc_no,track_no,title,duration_seconds,features')
           .eq('release_id', release.id)
           .order('disc_no', { ascending: true })
           .order('track_no', { ascending: true });
 
         if (!vErr && (vData?.length ?? 0) > 0) {
+          const mainId = String(release.artist_id);
           gotTracks = (vData as any).map((t: any) => ({
             disc_no: Number(t.disc_no || 1),
             track_no: Number(t.track_no || 0),
             title: t.title,
             duration_seconds: typeof t.duration_seconds === 'number' ? t.duration_seconds : null,
-            features: Array.isArray(t.features) ? t.features : [],
+            // filter OUT the primary album artist from the features list
+            features: Array.isArray(t.features)
+              ? t.features.filter((f: any) => String(f?.id) !== mainId)
+              : [],
           }));
         }
       } catch {
-        // ignore; will fall back to legacy arrays
+        // ignore; will fall back
       }
 
       // Fallback: legacy arrays on releases
@@ -134,7 +137,7 @@ export default function ReleasePage() {
       const nums = (pr || []).map((x: RatingRow) => Number(x.rating)).filter(Number.isFinite);
       setPeopleAvg(nums.length ? Math.round(nums.reduce((s, n) => s + n, 0) / nums.length) : null);
 
-      // 4) Staff review (best-effort: match by title)
+      // 4) Staff review (best-effort: find a review article that matches album title)
       try {
         const { data: rev } = await supabase
           .from('articles')
@@ -143,7 +146,6 @@ export default function ReleasePage() {
           .ilike('title', `%${release.title}%`)
           .order('published_at', { ascending: false })
           .limit(1);
-
         const row = (rev || [])[0] as any;
         if (row) {
           setReview({
@@ -284,9 +286,19 @@ export default function ReleasePage() {
       </div>
 
       {/* YouTube */}
-      <section className="mt-6">
-        <YouTubeEmbed input={rel.youtube_id} title={`${rel.title} — video`} />
-      </section>
+      {rel.youtube_id && (
+        <div className="mt-6 rounded-xl border border-zinc-800 overflow-hidden">
+          <div className="aspect-video w-full">
+            <iframe
+              className="w-full h-full"
+              src={`https://www.youtube.com/embed/${rel.youtube_id}`}
+              title="YouTube player"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          </div>
+        </div>
+      )}
 
       {/* Tracklist */}
       <section className="mt-8">
@@ -304,7 +316,7 @@ export default function ReleasePage() {
                       <span className="font-medium">{t.title}</span>
                       {t.features?.length ? (
                         <span className="opacity-80 text-xs">
-                          feat.{' '}
+                          feat{' '}
                           {t.features.map((f, idx) => (
                             <span key={String(f.id)}>
                               <Link href={`/artist/${f.slug}`} className="underline">{f.name}</Link>
@@ -330,21 +342,15 @@ export default function ReleasePage() {
             <Link href={`/articles/${review.slug}`} className="underline">{review.title}</Link>
           </h3>
           {review.dek ? <p className="opacity-85 mt-1">{review.dek}</p> : null}
-          {(review.author || review.published_at) && (
+          {review.author || review.published_at ? (
             <div className="text-xs opacity-60 mt-2">
               {review.author ? <>By {review.author}</> : null}
               {review.author && review.published_at ? ' • ' : null}
               {review.published_at ? new Date(review.published_at).toLocaleDateString() : null}
             </div>
-          )}
+          ) : null}
         </section>
       )}
-
-      {/* Comments */}
-      <section className="mt-8 rounded-xl border border-zinc-800 p-4">
-        <h2 className="text-lg font-bold mb-3">Comments</h2>
-        <AlbumComments releaseId={rel.id} />
-      </section>
 
       <style jsx>{`
         .input { background:#0a0a0a; border:1px solid #27272a; border-radius:0.5rem; padding:0.5rem 0.75rem; color:#f4f4f5; outline:none; }
