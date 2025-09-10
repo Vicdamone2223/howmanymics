@@ -1,17 +1,16 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ComponentType } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import ReleasePicker from '@/components/ReleasePicker';
-import type { ComponentType } from 'react';
-
 
 type ArtistRow = { id: number | string; name: string; slug: string };
 
 // Local lightweight type for “similar” rows
 type ReleaseLite = { id: number | string; title: string; slug: string };
+type SimilarRow = { position: number; s: ReleaseLite | null };
 
 type ReleaseRow = {
   id: number | string;
@@ -40,8 +39,7 @@ function slugify(s: string) {
 }
 
 // Loosen typing ONLY for the multi-select usage below; runtime stays identical
-const ReleasePickerAny = ReleasePicker as unknown as ComponentType<any>;
-
+const ReleasePickerAny = ReleasePicker as unknown as ComponentType<Record<string, unknown>>;
 
 export default function EditReleasePage() {
   const { id } = useParams<{ id: string }>();
@@ -183,7 +181,9 @@ export default function EditReleasePage() {
         .eq('release_id', rel.id)
         .order('position', { ascending: true });
 
-      const sims = ((simRows || []).map((x: { s: ReleaseLite | null }) => x.s).filter(Boolean) as ReleaseLite[]);
+      const sims = ((simRows as SimilarRow[] | null) ?? [])
+        .map((x) => x.s)
+        .filter((s): s is ReleaseLite => Boolean(s));
       setSimilar(sims);
 
       setLoading(false);
@@ -209,7 +209,8 @@ export default function EditReleasePage() {
       .filter(
         (a) =>
           !taken.has(String(a.id)) &&
-          (a.name.toLowerCase().includes(q) || a.slug.toLowerCase().includes(q))
+          (a.name.toLowerCase().includes(q) || a.slug.toLowerCase().includes(q)
+        )
       )
       .slice(0, 8);
   }, [artistQuery, albumArtists, artists]);
@@ -296,7 +297,10 @@ export default function EditReleasePage() {
 
       setNote('Saved ✔');
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : 'Save failed. Check row-level security for releases/release_artists/release_similars.';
+      const message =
+        e instanceof Error
+          ? e.message
+          : 'Save failed. Check row-level security for releases/release_artists/release_similars.';
       console.error(e);
       setErr(message);
     } finally {
@@ -518,20 +522,10 @@ export default function EditReleasePage() {
       </section>
 
       <style jsx>{`
-        .input {
-          background: #0a0a0a;
-          border: 1px solid #27272a;
-          border-radius: 0.5rem;
-          padding: 0.5rem 0.75rem;
-          color: #f4f4f5;
-          outline: none;
-        }
-        .input::placeholder { color: #a1a1aa; }
+        .input { background:#0a0a0a; border:1px solid #27272a; border-radius:0.5rem; padding:0.5rem 0.75rem; color:#f4f4f5; outline:none; }
+        .input::placeholder { color:#a1a1aa; }
         .input:focus { box-shadow: 0 0 0 2px rgba(249,115,22,0.35); }
-        .btn {
-          background: #f97316; color: #000; font-weight: 700;
-          border-radius: 0.5rem; padding: 0.6rem 0.9rem;
-        }
+        .btn { background:#f97316; color:#000; font-weight:700; border-radius:0.5rem; padding:0.6rem 0.9rem; }
         textarea.input { min-height: 160px; }
       `}</style>
     </main>

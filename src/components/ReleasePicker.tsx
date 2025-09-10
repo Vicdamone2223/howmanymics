@@ -50,7 +50,7 @@ export default function ReleasePicker({
 
   // Debounced search
   useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current as any);
+    if (timerRef.current) clearTimeout(timerRef.current);
     if (!q.trim()) {
       setResults([]);
       setErrMsg(null);
@@ -58,7 +58,7 @@ export default function ReleasePicker({
     }
     timerRef.current = setTimeout(runSearch, 250);
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current as any);
+      if (timerRef.current) clearTimeout(timerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
@@ -92,8 +92,14 @@ export default function ReleasePicker({
       } else {
         setResults((data || []) as ReleaseHit[]);
       }
-    } catch (e: any) {
-      if (e?.name !== 'AbortError') {
+    } catch (e: unknown) {
+      // ignore aborts; surface other errors
+      const isAbort =
+        (typeof e === 'object' &&
+          e !== null &&
+          'name' in e &&
+          (e as { name?: string }).name === 'AbortError');
+      if (!isAbort) {
         console.error('ReleasePicker search failed:', e);
         setErrMsg('Search failed.');
       }
@@ -103,7 +109,6 @@ export default function ReleasePicker({
   }
 
   function choose(r: ReleaseHit) {
-    // Use a non-submit button so parent forms don't intercept the click
     onChange(String(r.id));
     setSelected(r);
     setQ('');
@@ -117,7 +122,10 @@ export default function ReleasePicker({
     setResults([]);
   }
 
-  const showDropdown = useMemo(() => q.trim().length > 0 && (loading || results.length > 0 || errMsg), [q, loading, results.length, errMsg]);
+  const showDropdown = useMemo(
+    () => q.trim().length > 0 && (loading || results.length > 0 || errMsg),
+    [q, loading, results.length, errMsg]
+  );
 
   return (
     <div className="relative">
@@ -131,7 +139,8 @@ export default function ReleasePicker({
             className="h-6 w-6 rounded object-cover border border-zinc-800"
           />
           <span className="opacity-90">
-            {selected.title} {selected.year ? `(${selected.year})` : ''} — <code className="opacity-100">/{selected.slug}</code>
+            {selected.title} {selected.year ? `(${selected.year})` : ''} —{' '}
+            <code className="opacity-100">/{selected.slug}</code>
           </span>
           <button
             type="button"
@@ -155,12 +164,8 @@ export default function ReleasePicker({
       {/* Dropdown */}
       {showDropdown && (
         <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
-          {loading && (
-            <div className="px-3 py-2 text-sm opacity-70">Searching…</div>
-          )}
-          {!loading && errMsg && (
-            <div className="px-3 py-2 text-sm text-red-300">{errMsg}</div>
-          )}
+          {loading && <div className="px-3 py-2 text-sm opacity-70">Searching…</div>}
+          {!loading && errMsg && <div className="px-3 py-2 text-sm text-red-300">{errMsg}</div>}
           {!loading && !errMsg && results.length === 0 && (
             <div className="px-3 py-2 text-sm opacity-70">No matches.</div>
           )}
@@ -176,7 +181,8 @@ export default function ReleasePicker({
                   />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm">
-                      <strong>{r.title}</strong> {r.year ? <span className="opacity-70">({r.year})</span> : null}
+                      <strong>{r.title}</strong>{' '}
+                      {r.year ? <span className="opacity-70">({r.year})</span> : null}
                     </div>
                     <div className="text-xs opacity-70 truncate">/{r.slug}</div>
                   </div>
@@ -203,8 +209,12 @@ export default function ReleasePicker({
           color: #f4f4f5;
           outline: none;
         }
-        .input::placeholder { color: #a1a1aa; }
-        .input:focus { box-shadow: 0 0 0 2px rgba(249,115,22,0.35); }
+        .input::placeholder {
+          color: #a1a1aa;
+        }
+        .input:focus {
+          box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.35);
+        }
       `}</style>
     </div>
   );
