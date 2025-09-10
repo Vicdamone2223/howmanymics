@@ -104,6 +104,8 @@ export default function EditArtistPage() {
   async function save(e: React.FormEvent) {
     e.preventDefault();
 
+    if (!a) return; // <-- guard to satisfy TS
+
     // Clamp rating only on submit (no min/max while typing)
     const parsed = parseInt(staffScore, 10);
     const clampedStaff = Number.isFinite(parsed) ? Math.max(50, Math.min(100, parsed)) : null;
@@ -129,6 +131,7 @@ export default function EditArtistPage() {
   }
 
   async function remove() {
+    if (!a) return; // <-- guard to satisfy TS
     if (!confirm('Delete this artist? This cannot be undone.')) return;
     const { error } = await supabase.from('artists').delete().eq('id', a.id);
     if (error) return alert(error.message);
