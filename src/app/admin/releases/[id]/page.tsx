@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import ReleasePicker from '@/components/ReleasePicker';
+import type { ComponentType } from 'react';
+
 
 type ArtistRow = { id: number | string; name: string; slug: string };
 
@@ -38,7 +40,8 @@ function slugify(s: string) {
 }
 
 // Loosen typing ONLY for the multi-select usage below; runtime stays identical
-const ReleasePickerAny = ReleasePicker as unknown as (props: any) => JSX.Element;
+const ReleasePickerAny = ReleasePicker as unknown as ComponentType<any>;
+
 
 export default function EditReleasePage() {
   const { id } = useParams<{ id: string }>();
