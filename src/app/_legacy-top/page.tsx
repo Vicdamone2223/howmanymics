@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
+// src/app/_legacy-top/page.tsx
+import { supabase } from '@/lib/supabaseClient';
+
 
 type Row = {
   id: number;
