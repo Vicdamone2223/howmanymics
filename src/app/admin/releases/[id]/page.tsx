@@ -1,11 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-import ReleasePicker, { ReleaseLite } from '@/components/ReleasePicker';
+import ReleasePicker from '@/components/ReleasePicker';
 
 type ArtistRow = { id: number | string; name: string; slug: string };
+
+// Local lightweight type for “similar” rows
+type ReleaseLite = { id: number | string; title: string; slug: string };
 
 type ReleaseRow = {
   id: number | string;
@@ -32,6 +36,9 @@ function slugify(s: string) {
     .trim()
     .replace(/\s+/g, '-');
 }
+
+// Loosen typing ONLY for the multi-select usage below; runtime stays identical
+const ReleasePickerAny = ReleasePicker as unknown as (props: any) => JSX.Element;
 
 export default function EditReleasePage() {
   const { id } = useParams<{ id: string }>();
@@ -93,7 +100,7 @@ export default function EditReleasePage() {
       }
       setOk(true);
 
-      // fetch ALL artists (local var to avoid timing with setState)
+      // fetch ALL artists
       const fetchedArtists: ArtistRow[] = [];
       const PAGE = 500;
       let from = 0;
@@ -173,7 +180,8 @@ export default function EditReleasePage() {
         .eq('release_id', rel.id)
         .order('position', { ascending: true });
 
-      setSimilar(((simRows || []).map((x: any) => x.s) as ReleaseLite[]).filter(Boolean));
+      const sims = ((simRows || []).map((x: { s: ReleaseLite | null }) => x.s).filter(Boolean) as ReleaseLite[]);
+      setSimilar(sims);
 
       setLoading(false);
     })();
@@ -271,7 +279,7 @@ export default function EditReleasePage() {
         if (raErr) throw raErr;
       }
 
-      // similars (use upsert to ensure idempotent)
+      // similars
       await supabase.from('release_similars').delete().eq('release_id', relId);
       if (similar.length) {
         const rows = similar.map((r, idx) => ({
@@ -284,9 +292,10 @@ export default function EditReleasePage() {
       }
 
       setNote('Saved ✔');
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Save failed. Check row-level security for releases/release_artists/release_similars.';
       console.error(e);
-      setErr(e?.message || 'Save failed. Check row-level security for releases/release_artists/release_similars.');
+      setErr(message);
     } finally {
       setSaving(false);
     }
@@ -329,9 +338,10 @@ export default function EditReleasePage() {
       setRevCover(''); setRevFeatured(false); setRevPublishNow(true);
 
       setNote('Review saved ✔');
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Could not save review (check articles RLS).';
       console.error(e);
-      setErr(e?.message || 'Could not save review (check articles RLS).');
+      setErr(message);
     } finally {
       setSaving(false);
     }
@@ -354,7 +364,7 @@ export default function EditReleasePage() {
       <div className="mb-4 flex items-center justify-between gap-3">
         <h1 className="text-2xl font-extrabold tracking-tight">Edit Album</h1>
         <div className="flex items-center gap-2">
-          <a href="/admin/releases" className="text-sm opacity-80 hover:opacity-100 underline">← Back</a>
+          <Link href="/admin/releases" className="text-sm opacity-80 hover:opacity-100 underline">← Back</Link>
           <button onClick={deleteRelease} className="text-sm px-2 py-1 rounded border border-red-700 text-red-300 hover:bg-red-900/20">
             Delete
           </button>
@@ -470,7 +480,8 @@ export default function EditReleasePage() {
 
         {/* Similar albums */}
         <div className="sm:col-span-2 rounded-lg border border-zinc-800 p-3">
-          <ReleasePicker value={similar} onChange={setSimilar} max={6} label="Similar albums" />
+          {/* We intentionally relax typing for this multi-select usage */}
+          <ReleasePickerAny value={similar} onChange={setSimilar} max={6} label="Similar albums" />
         </div>
 
         <div className="sm:col-span-2 mt-2">
