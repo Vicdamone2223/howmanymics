@@ -216,7 +216,7 @@ export default function AdminPage() {
     const parsed = parseInt(aStaffScore, 10);
     const staffScore = Number.isFinite(parsed) ? Math.max(50, Math.min(100, parsed)) : null;
 
-    const payload: any = {
+    const payload = {
       name: aName.trim(),
       slug: slugify(aSlug || aName),
       card_img_url: aImg.trim() || null,
@@ -258,7 +258,7 @@ export default function AdminPage() {
     const disc1 = tracks1.map((t) => t.trim()).filter(Boolean);
     const disc2 = tracks2.map((t) => t.trim()).filter(Boolean);
 
-    const base: any = {
+    const base = {
       title: rTitle.trim(),
       slug: finalSlug,
       artist_id: rArtistId,
@@ -282,7 +282,7 @@ export default function AdminPage() {
       return;
     }
 
-    const updatePayload: any = {
+    const updatePayload = {
       tracks_disc1: disc1.length ? disc1 : null,
       tracks_disc2: rDouble ? (disc2.length ? disc2 : null) : null,
     };
@@ -336,6 +336,10 @@ export default function AdminPage() {
           </a>
           <a href="/admin/debates" className="opacity-80 hover:opacity-100 underline">
             Manage Debates →
+          </a>
+          {/* NEW: Verse of the Month */}
+          <a href="/admin/verse" className="opacity-80 hover:opacity-100 underline">
+            Verse of the Month →
           </a>
         </nav>
       </div>
