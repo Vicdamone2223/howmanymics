@@ -103,7 +103,9 @@ export default function ArtistPage() {
       const withAverages = combined.map((r: any) => {
         const arr = Array.isArray(r.release_ratings) ? r.release_ratings : [];
         const nums = arr.map((x: any) => Number(x.rating)).filter(Number.isFinite);
-        const avg  = nums.length ? Math.round(nums.reduce((s, n) => s + n, 0) / nums.length) : null;
+        const avg  = nums.length
+          ? Math.round(nums.reduce((sum: number, n: number) => sum + n, 0) / nums.length)
+          : null;
         return { id: r.id, title: r.title, slug: r.slug, cover_url: r.cover_url, year: r.year, rating_staff: r.rating_staff ?? null, people_avg: avg };
       });
 
