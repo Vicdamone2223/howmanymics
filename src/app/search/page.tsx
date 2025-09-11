@@ -1,4 +1,7 @@
 // src/app/search/page.tsx
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 import { supabase } from '@/lib/supabaseClient';
 
 export default async function SearchPage({
