@@ -21,7 +21,7 @@ import type {
   TodayEvent,
 } from '@/types/hmm';
 
-// ---- Row types for Supabase responses ----
+// ---- Row types for Supabase responses (to avoid `any`) ----
 type ArticleRow = {
   id: number;
   title: string;
@@ -40,8 +40,8 @@ type ReleaseRow = {
   cover_url: string | null;
   year: number | null;
   rating_staff: number | null;
-  artists: { name: string }[] | null;              // via join
-  release_ratings: { rating: number }[] | null;    // via join
+  artists: { name: string }[] | null;
+  release_ratings: { rating: number }[] | null;
 };
 
 type TodayRow = {
@@ -51,13 +51,13 @@ type TodayRow = {
 };
 
 type DebateRow = {
-  id: number;
   slug: string;
-  topic: string;
+  title: string;
   a_label: string | null;
   b_label: string | null;
-  a_pct: number | null; // legacy default / fallback
-  b_pct: number | null; // legacy default / fallback
+  a_pct: number | null;
+  b_pct: number | null;
+  href: string | null;
   is_featured: boolean | null;
   updated_at: string | null;
 };
@@ -65,16 +65,20 @@ type DebateRow = {
 export default function Home() {
   const year = useMemo(() => new Date().getFullYear(), []);
 
+  // Start with null to avoid placeholder flash
   const [news, setNews] = useState<NewsItem[] | null>(null);
+
   const [topYear, setTopYear] = useState<AlbumYearRow[]>([]);
   const [today, setToday] = useState<TodayEvent[]>([]);
+
+  // NOTE: Debate now uses `slug` (no `href` required)
   const [debate, setDebate] = useState<Debate>({
+    slug: '',
     topic: '—',
     aLabel: 'A',
     bLabel: 'B',
     aPct: 0,
     bPct: 0,
-    href: '#',
   });
 
   const [lists] = useState<ListCard[]>([
@@ -119,7 +123,7 @@ export default function Home() {
         setNews(items);
       } catch (e) {
         console.error('articles fetch error:', e);
-        setNews([]); // show “No posts yet.”
+        setNews([]); // show “No posts yet.” instead of placeholders
       }
 
       // ------- Top albums of the year -------
@@ -142,7 +146,8 @@ export default function Home() {
             .filter((v): v is number => Number.isFinite(v));
           const peopleAvg =
             pplNums.length > 0
-              ? pplNums.reduce((sum: number, n: number) => sum + n, 0) / pplNums.length
+              ? pplNums.reduce((sum: number, n: number) => sum + n, 0) /
+                pplNums.length
               : null;
 
           const staff = r.rating_staff ?? null;
@@ -197,11 +202,13 @@ export default function Home() {
         if (items.length) setToday(items);
       }
 
-      // ------- Debate Spotlight (compute live from votes; fallback to stored %) -------
+      // ------- Debate Spotlight (latest featured, else latest updated) -------
       {
         const { data } = await supabase
           .from('debates')
-          .select('id,slug,topic,a_label,b_label,a_pct,b_pct,is_featured,updated_at')
+          .select(
+            'slug,title,a_label,b_label,a_pct,b_pct,href,is_featured,updated_at'
+          )
           .order('is_featured', { ascending: false })
           .order('updated_at', { ascending: false })
           .limit(1);
@@ -209,46 +216,13 @@ export default function Home() {
         const rows = (data ?? []) as DebateRow[];
         if (rows.length) {
           const d = rows[0];
-
-          // Try to compute live counts from debate_votes
-          let aCount = 0;
-          let bCount = 0;
-
-          try {
-            const aRes = await supabase
-              .from('debate_votes')
-              .select('*', { count: 'exact', head: true })
-              .eq('debate_id', d.id)
-              .eq('choice', 'A');
-            aCount = aRes.count ?? 0;
-
-            const bRes = await supabase
-              .from('debate_votes')
-              .select('*', { count: 'exact', head: true })
-              .eq('debate_id', d.id)
-              .eq('choice', 'B');
-            bCount = bRes.count ?? 0;
-          } catch {
-            // ignore; will use fallback below
-          }
-
-          const total = aCount + bCount;
-
-          const aPctLive =
-            total > 0 ? Math.round((aCount / total) * 100) : null;
-          const bPctLive =
-            total > 0 ? Math.max(0, 100 - (aPctLive ?? 0)) : null;
-
           setDebate({
-            topic: d.topic,
+            slug: d.slug,
+            topic: d.title,
             aLabel: d.a_label ?? 'A',
             bLabel: d.b_label ?? 'B',
-            aPct:
-              aPctLive ?? (typeof d.a_pct === 'number' ? d.a_pct : 50),
-            bPct:
-              bPctLive ?? (typeof d.b_pct === 'number' ? d.b_pct : 50),
-            // Link to the debate detail (so users can vote there too)
-            href: `/debates/${d.slug}`,
+            aPct: Number(d.a_pct ?? 0),
+            bPct: Number(d.b_pct ?? 0),
           });
         }
       }
@@ -270,7 +244,7 @@ export default function Home() {
       <DebateSpotlight debate={debate} />
       <ListsRail items={[]} />
 
-      {/* Verse of the Month */}
+      {/* NEW: Verse of the Month (pulls latest from Supabase) */}
       <VerseOfMonth />
     </main>
   );
