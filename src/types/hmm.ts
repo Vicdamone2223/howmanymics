@@ -57,12 +57,14 @@ export type TodayEvent = {
 };
 
 export type Debate = {
+  slug: string;      // ✅ needed for /debates/[slug]
   topic: string;
   aLabel: string;
   bLabel: string;
   aPct: number;
   bPct: number;
-  href: string;
+  // (optional) keep href if you still use it elsewhere:
+  // href?: string | null;
 };
 
 export type ListCard = {

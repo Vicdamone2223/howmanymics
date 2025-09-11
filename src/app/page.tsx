@@ -11,7 +11,7 @@ import TopOfYear from '@/components/TopOfYear';
 import TodayInHipHopWidget from '@/components/TodayInHipHopWidget';
 import DebateSpotlight from '@/components/DebateSpotlight';
 import ListsRail from '@/components/ListsRail';
-import VerseOfMonth from '@/components/VerseOfMonth'; // ⟵ NEW
+import VerseOfMonth from '@/components/VerseOfMonth';
 
 import type {
   AlbumYearRow,
@@ -21,7 +21,7 @@ import type {
   TodayEvent,
 } from '@/types/hmm';
 
-// ---- Row types for Supabase responses (to avoid `any`) ----
+// ---- Row types for Supabase responses ----
 type ArticleRow = {
   id: number;
   title: string;
@@ -40,9 +40,8 @@ type ReleaseRow = {
   cover_url: string | null;
   year: number | null;
   rating_staff: number | null;
-  // Supabase join returns an array of artists
-  artists: { name: string }[] | null;
-  release_ratings: { rating: number }[] | null;
+  artists: { name: string }[] | null;              // via join
+  release_ratings: { rating: number }[] | null;    // via join
 };
 
 type TodayRow = {
@@ -52,12 +51,13 @@ type TodayRow = {
 };
 
 type DebateRow = {
-  title: string;
+  id: number;
+  slug: string;
+  topic: string;
   a_label: string | null;
   b_label: string | null;
-  a_pct: number | null;
-  b_pct: number | null;
-  href: string | null;
+  a_pct: number | null; // legacy default / fallback
+  b_pct: number | null; // legacy default / fallback
   is_featured: boolean | null;
   updated_at: string | null;
 };
@@ -65,9 +65,7 @@ type DebateRow = {
 export default function Home() {
   const year = useMemo(() => new Date().getFullYear(), []);
 
-  // Start with null to avoid placeholder flash
   const [news, setNews] = useState<NewsItem[] | null>(null);
-
   const [topYear, setTopYear] = useState<AlbumYearRow[]>([]);
   const [today, setToday] = useState<TodayEvent[]>([]);
   const [debate, setDebate] = useState<Debate>({
@@ -78,6 +76,7 @@ export default function Home() {
     bPct: 0,
     href: '#',
   });
+
   const [lists] = useState<ListCard[]>([
     {
       type: 'staff',
@@ -95,7 +94,7 @@ export default function Home() {
 
   useEffect(() => {
     (async () => {
-      // ------- Featured slider: latest 5 with published_at (articles + reviews) -------
+      // ------- Featured slider -------
       try {
         const { data, error } = await supabase
           .from('articles')
@@ -120,10 +119,10 @@ export default function Home() {
         setNews(items);
       } catch (e) {
         console.error('articles fetch error:', e);
-        setNews([]); // show “No posts yet.” instead of placeholders
+        setNews([]); // show “No posts yet.”
       }
 
-      // ------- Top albums of the year (overall = 50% staff + 50% people) -------
+      // ------- Top albums of the year -------
       {
         const { data } = await supabase
           .from('releases')
@@ -146,15 +145,15 @@ export default function Home() {
               ? pplNums.reduce((sum: number, n: number) => sum + n, 0) / pplNums.length
               : null;
 
-        const staff = r.rating_staff ?? null;
-        const overall =
-          staff == null && peopleAvg == null
-            ? null
-            : staff != null && peopleAvg == null
-            ? staff
-            : staff == null && peopleAvg != null
-            ? Math.round(peopleAvg)
-            : Math.round(0.5 * Number(staff) + 0.5 * Number(peopleAvg));
+          const staff = r.rating_staff ?? null;
+          const overall =
+            staff == null && peopleAvg == null
+              ? null
+              : staff != null && peopleAvg == null
+              ? staff
+              : staff == null && peopleAvg != null
+              ? Math.round(peopleAvg)
+              : Math.round(0.5 * Number(staff) + 0.5 * Number(peopleAvg));
 
           return {
             rank: 0,
@@ -198,13 +197,11 @@ export default function Home() {
         if (items.length) setToday(items);
       }
 
-      // ------- Debate Spotlight (latest featured, else latest updated) -------
+      // ------- Debate Spotlight (compute live from votes; fallback to stored %) -------
       {
         const { data } = await supabase
           .from('debates')
-          .select(
-            'title,a_label,b_label,a_pct,b_pct,href,is_featured,updated_at'
-          )
+          .select('id,slug,topic,a_label,b_label,a_pct,b_pct,is_featured,updated_at')
           .order('is_featured', { ascending: false })
           .order('updated_at', { ascending: false })
           .limit(1);
@@ -212,13 +209,46 @@ export default function Home() {
         const rows = (data ?? []) as DebateRow[];
         if (rows.length) {
           const d = rows[0];
+
+          // Try to compute live counts from debate_votes
+          let aCount = 0;
+          let bCount = 0;
+
+          try {
+            const aRes = await supabase
+              .from('debate_votes')
+              .select('*', { count: 'exact', head: true })
+              .eq('debate_id', d.id)
+              .eq('choice', 'A');
+            aCount = aRes.count ?? 0;
+
+            const bRes = await supabase
+              .from('debate_votes')
+              .select('*', { count: 'exact', head: true })
+              .eq('debate_id', d.id)
+              .eq('choice', 'B');
+            bCount = bRes.count ?? 0;
+          } catch {
+            // ignore; will use fallback below
+          }
+
+          const total = aCount + bCount;
+
+          const aPctLive =
+            total > 0 ? Math.round((aCount / total) * 100) : null;
+          const bPctLive =
+            total > 0 ? Math.max(0, 100 - (aPctLive ?? 0)) : null;
+
           setDebate({
-            topic: d.title,
+            topic: d.topic,
             aLabel: d.a_label ?? 'A',
             bLabel: d.b_label ?? 'B',
-            aPct: Number(d.a_pct ?? 0),
-            bPct: Number(d.b_pct ?? 0),
-            href: d.href || '#',
+            aPct:
+              aPctLive ?? (typeof d.a_pct === 'number' ? d.a_pct : 50),
+            bPct:
+              bPctLive ?? (typeof d.b_pct === 'number' ? d.b_pct : 50),
+            // Link to the debate detail (so users can vote there too)
+            href: `/debates/${d.slug}`,
           });
         }
       }
@@ -240,7 +270,7 @@ export default function Home() {
       <DebateSpotlight debate={debate} />
       <ListsRail items={[]} />
 
-      {/* NEW: Verse of the Month (pulls latest from Supabase) */}
+      {/* Verse of the Month */}
       <VerseOfMonth />
     </main>
   );
