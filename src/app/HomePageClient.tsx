@@ -1,4 +1,4 @@
-// src/app/page.tsx
+// src/app/HomePageClient.tsx (or src/app/page.tsx if you render directly)
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -11,7 +11,7 @@ import TopOfYear from '@/components/TopOfYear';
 import TodayInHipHopWidget from '@/components/TodayInHipHopWidget';
 import DebateSpotlight from '@/components/DebateSpotlight';
 import ListsRail from '@/components/ListsRail';
-
+import VerseOfMonth from '@/components/VerseOfMonth';
 
 import type {
   AlbumYearRow,
@@ -21,7 +21,7 @@ import type {
   TodayEvent,
 } from '@/types/hmm';
 
-// ---- Row types for Supabase responses (to avoid `any`) ----
+// ---- Supabase row helpers (keeps `any` away) ----
 type ArticleRow = {
   id: number;
   title: string;
@@ -51,28 +51,27 @@ type TodayRow = {
 };
 
 type DebateRow = {
-  id: number;                // ⟵ add id so we can count votes
+  id: number;
   slug: string;
-  title: string;             // (your table uses title here)
+  title: string;
   a_label: string | null;
   b_label: string | null;
-  a_pct: number | null;      // admin fallback
-  b_pct: number | null;      // admin fallback
+  a_pct: number | null;
+  b_pct: number | null;
   href: string | null;
   is_featured: boolean | null;
   updated_at: string | null;
 };
 
-export default function Home() {
+export default function HomePageClient() {
   const year = useMemo(() => new Date().getFullYear(), []);
 
-  // Start with null to avoid placeholder flash
+  // News: start with null to avoid placeholder flash until we know
   const [news, setNews] = useState<NewsItem[] | null>(null);
 
   const [topYear, setTopYear] = useState<AlbumYearRow[]>([]);
   const [today, setToday] = useState<TodayEvent[]>([]);
 
-  // Debate now uses `slug` (no href needed on state)
   const [debate, setDebate] = useState<Debate>({
     slug: '',
     topic: '—',
@@ -82,6 +81,7 @@ export default function Home() {
     bPct: 0,
   });
 
+  // (Unused right now, keep for parity with your UI)
   const [lists] = useState<ListCard[]>([
     {
       type: 'staff',
@@ -98,6 +98,8 @@ export default function Home() {
   ]);
 
   useEffect(() => {
+    let isMounted = true; // avoid setState after unmount
+
     (async () => {
       // ------- Featured slider -------
       try {
@@ -121,14 +123,14 @@ export default function Home() {
           href: `/articles/${a.slug}`,
         }));
 
-        setNews(items);
+        if (isMounted) setNews(items);
       } catch (e) {
         console.error('articles fetch error:', e);
-        setNews([]); // show “No posts yet.” instead of placeholders
+        if (isMounted) setNews([]); // show “No posts yet.”
       }
 
       // ------- Top albums of the year -------
-      {
+      try {
         const { data } = await supabase
           .from('releases')
           .select(
@@ -140,12 +142,13 @@ export default function Home() {
 
         const formatted: AlbumYearRow[] = rows.map((r) => {
           const ratings = Array.isArray(r.release_ratings) ? r.release_ratings : [];
-          const pplNums: number[] = ratings
+          const pplNums = ratings
             .map((x) => Number(x.rating))
             .filter((v): v is number => Number.isFinite(v));
+
           const peopleAvg =
             pplNums.length > 0
-              ? pplNums.reduce((sum: number, n: number) => sum + n, 0) / pplNums.length
+              ? pplNums.reduce((sum, n) => sum + n, 0) / pplNums.length
               : null;
 
           const staff = r.rating_staff ?? null;
@@ -174,11 +177,13 @@ export default function Home() {
           .slice(0, 4)
           .forEach((row, i) => (row.rank = i + 1));
 
-        if (formatted.length) setTopYear(formatted.slice(0, 4));
+        if (formatted.length && isMounted) setTopYear(formatted.slice(0, 4));
+      } catch (e) {
+        console.error('top-of-year fetch error:', e);
       }
 
       // ------- Today in Hip-Hop -------
-      {
+      try {
         const d = new Date();
         const mm = d.getMonth() + 1;
         const dd = d.getDate();
@@ -197,12 +202,13 @@ export default function Home() {
           href: t.href || '#',
         }));
 
-        if (items.length) setToday(items);
+        if (items.length && isMounted) setToday(items);
+      } catch (e) {
+        console.error('today_in_hiphop fetch error:', e);
       }
 
-      // ------- Debate Spotlight (latest featured, else latest updated) ------- //
-      {
-        // include id so we can count live votes
+      // ------- Debate Spotlight (featured → latest updated) -------
+      try {
         const { data } = await supabase
           .from('debates')
           .select(
@@ -213,48 +219,54 @@ export default function Home() {
           .limit(1);
 
         const rows = (data ?? []) as DebateRow[];
-        if (rows.length) {
-          const d = rows[0];
+        if (!rows.length) return;
 
-          // live counts (parallel)
-          const [aRes, bRes] = await Promise.all([
-            supabase
-              .from('debate_votes')
-              .select('*', { head: true, count: 'exact' })
-              .eq('debate_id', d.id)
-              .eq('choice', 'A'),
-            supabase
-              .from('debate_votes')
-              .select('*', { head: true, count: 'exact' })
-              .eq('debate_id', d.id)
-              .eq('choice', 'B'),
-          ]);
+        const d0 = rows[0];
 
-          const aCount = aRes.count ?? 0;
-          const bCount = bRes.count ?? 0;
-          const total = aCount + bCount;
+        // live vote counts
+        const [aRes, bRes] = await Promise.all([
+          supabase
+            .from('debate_votes')
+            .select('*', { head: true, count: 'exact' })
+            .eq('debate_id', d0.id)
+            .eq('choice', 'A'),
+          supabase
+            .from('debate_votes')
+            .select('*', { head: true, count: 'exact' })
+            .eq('debate_id', d0.id)
+            .eq('choice', 'B'),
+        ]);
 
-          const aPct =
-            total > 0 ? Math.round((aCount * 100) / total) : Number(d.a_pct ?? 0);
-          const bPct =
-            total > 0 ? 100 - aPct : Number(d.b_pct ?? 0);
+        const aCount = aRes.count ?? 0;
+        const bCount = bRes.count ?? 0;
+        const total = aCount + bCount;
 
+        const aPct = total > 0 ? Math.round((aCount * 100) / total) : Number(d0.a_pct ?? 0);
+        const bPct = total > 0 ? 100 - aPct : Number(d0.b_pct ?? 0);
+
+        if (isMounted) {
           setDebate({
-            slug: d.slug,
-            topic: d.title,
-            aLabel: d.a_label ?? 'A',
-            bLabel: d.b_label ?? 'B',
+            slug: d0.slug,
+            topic: d0.title,
+            aLabel: d0.a_label ?? 'A',
+            bLabel: d0.b_label ?? 'B',
             aPct,
             bPct,
           });
         }
+      } catch (e) {
+        console.error('debate spotlight fetch error:', e);
       }
     })();
+
+    return () => {
+      isMounted = false;
+    };
   }, [year]);
 
   return (
     <main className="mx-auto max-w-[1400px] px-4 py-4">
-      {/* Only render when real data arrives (prevents placeholder flash) */}
+      {/* Only render News when real data arrives (prevents placeholder flash) */}
       {news !== null && <NewsSlider items={news as NewsItem[]} />}
 
       <GoatTicker limit={15} />
@@ -265,10 +277,12 @@ export default function Home() {
 
       <TodayInHipHopWidget items={today} />
       <DebateSpotlight debate={debate} />
+
+      {/* Optional lists rail (currently empty) */}
       <ListsRail items={[]} />
 
-      {/* NEW: Verse of the Month (pulls latest from Supabase) */}
-    
+      {/* Verse of the Month (safe, client-only embed) */}
+      <VerseOfMonth />
     </main>
   );
 }

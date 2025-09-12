@@ -10,6 +10,7 @@ import GlobalErrorTrap from '@/components/GlobalErrorTrap';
 const DISABLE_EMBEDS = process.env.NEXT_PUBLIC_DISABLE_EMBEDS === '1';
 
 export default function ClientShell({ children }: { children: React.ReactNode }) {
+  // Mount gate to avoid any server/client HTML drift
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 

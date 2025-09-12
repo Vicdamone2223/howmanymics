@@ -1,20 +1,46 @@
 'use client';
+
 import React from 'react';
 
-export default class AppErrorBoundary extends React.Component<
-  { children: React.ReactNode }, { hasError: boolean; note?: string }
+type State = { hasError: boolean; err?: any };
+
+export default class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  State
 > {
-  constructor(props:any){ super(props); this.state = { hasError:false }; }
-  static getDerivedStateFromError(err:any){ return { hasError:true, note:String(err?.message||err) }; }
-  componentDidCatch(err:any, info:any){ console.error('App error boundary:', err, info); }
-  render(){
-    if(this.state.hasError){
+  state: State = { hasError: false };
+
+  static getDerivedStateFromError(err: any) {
+    return { hasError: true, err };
+  }
+
+  componentDidCatch(err: any, info: any) {
+    // surface to console too
+    console.error('Caught by ErrorBoundary:', err, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
       return (
-        <main className="mx-auto max-w-3xl px-4 py-8">
-          <h1 className="text-2xl font-bold">Something went wrong</h1>
-          <p className="opacity-75 text-sm mt-2">{this.state.note}</p>
-          <p className="opacity-60 text-xs mt-2">If this sticks after reload, the UI caught a runtime error.</p>
-        </main>
+        <div style={{ padding: 20 }}>
+          <h2 style={{ fontWeight: 800, marginBottom: 8 }}>Something crashed</h2>
+          <pre
+            style={{
+              whiteSpace: 'pre-wrap',
+              background: '#111',
+              border: '1px solid #333',
+              padding: 12,
+              borderRadius: 8,
+              color: '#fca5a5',
+            }}
+          >
+            {String(this.state.err?.message || this.state.err || 'Unknown error')}
+          </pre>
+          <p style={{ opacity: 0.75, marginTop: 8 }}>
+            If this appears only when logged in or after switching tabs, the crash is likely in a
+            client effect that runs on auth/session restore.
+          </p>
+        </div>
       );
     }
     return this.props.children;
