@@ -11,7 +11,7 @@ import TopOfYear from '@/components/TopOfYear';
 import TodayInHipHopWidget from '@/components/TodayInHipHopWidget';
 import DebateSpotlight from '@/components/DebateSpotlight';
 import ListsRail from '@/components/ListsRail';
-import VerseOfMonth from '@/components/VerseOfMonth';
+
 
 import type {
   AlbumYearRow,

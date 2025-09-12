@@ -1,10 +1,35 @@
+// src/lib/supabaseClient.ts
+'use client';
+
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 let _client: SupabaseClient | null = null;
 
-/**
- * Lazy runtime initializer. No client is created at module import time.
- */
+// --- TEMP: nuke corrupted auth JSON if present (prevents hard-brick) ---
+function sanitizeSupabaseAuthStorage(projectRef: string) {
+  if (typeof window === 'undefined') return;
+  const key = `sb-${projectRef}-auth-token`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    // Some browsers/extensions can truncate this JSON. Validate it.
+    const parsed = JSON.parse(raw);
+    // Minimal shape check; if it fails, clear it so supabase can re-login.
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      !parsed.currentSession ||
+      !parsed.expiresAt
+    ) {
+      throw new Error('invalid shape');
+    }
+  } catch {
+    // If parsing fails or shape is wrong, clear the item. User will still be logged in
+    // after a silent refresh; worst case they need to sign in once again.
+    try { localStorage.removeItem(`sb-${projectRef}-auth-token`); } catch {}
+  }
+}
+
 export function getSupabase(): SupabaseClient {
   if (_client) return _client;
 
@@ -18,27 +43,19 @@ export function getSupabase(): SupabaseClient {
     throw new Error('Supabase anon key missing at runtime');
   }
 
-  _client = createClient(url, key, {
-    auth: {
-      persistSession: true,
-      // Key change: stop the built-in auto refresh loop that’s bricking the UI
-      autoRefreshToken: false,
-      detectSessionInUrl: true,
-    },
-  });
+  // project ref is the middle piece of the URL: https://<ref>.supabase.co
+  const projectRef = (new URL(url)).hostname.split('.')[0];
+  sanitizeSupabaseAuthStorage(projectRef);
 
+  _client = createClient(url, key);
   return _client;
 }
 
-/**
- * Back-compat export: a lazy proxy that behaves like the client.
- * Existing imports like `import { supabase } from '@/lib/supabaseClient'`
- * will keep working, but the client is still created lazily.
- */
+// Back-compat proxy
 export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
   get(_t, prop) {
     const client = getSupabase();
-    // @ts-ignore – dynamic property pass-through
+    // @ts-ignore dynamic pass-through
     return client[prop];
   },
 });
