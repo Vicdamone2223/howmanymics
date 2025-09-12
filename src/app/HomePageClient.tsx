@@ -268,7 +268,7 @@ export default function Home() {
       <ListsRail items={[]} />
 
       {/* NEW: Verse of the Month (pulls latest from Supabase) */}
-      <VerseOfMonth />
+    
     </main>
   );
 }
