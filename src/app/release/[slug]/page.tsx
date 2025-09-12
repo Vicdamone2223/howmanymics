@@ -21,7 +21,7 @@ type ReleaseRow = {
   rating_staff: number | null;
   tracks_disc1: string[] | null;
   tracks_disc2: string[] | null;
-  artist_id: number | null; // <-- added
+  artist_id: number | null;
 };
 
 type TrackRow = {
@@ -169,18 +169,20 @@ export default function ReleasePage() {
         setPeopleAvg(null);
       }
 
-      // 4) Staff review
+      // 4) Staff review  ———— FIXED: no release_slug in select/filter ————
       try {
+        // Direct match by foreign key (fast + exact)
         const { data: artDirect } = await supabase
           .from('articles')
-          .select('id,slug,title,dek,author,published_at,kind,release_id,release_slug')
+          .select('id,slug,title,dek,author,published_at,kind,release_id')
           .eq('kind', 'review')
-          .or(`release_id.eq.${release.id},release_slug.eq.${release.slug}`)
+          .eq('release_id', release.id)
           .order('published_at', { ascending: false })
           .limit(1);
 
         let picked = (artDirect || [])[0] as any;
 
+        // Fallback: fuzzy title match (if no FK-linked review)
         if (!picked) {
           const { data: fuzzy } = await supabase
             .from('articles')
@@ -290,19 +292,19 @@ export default function ReleasePage() {
               </span>
             ) : null}
             {rel.rating_staff != null && (
-              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
+              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
                 <span role="img" aria-label="mic">🎙️</span>
                 <strong className="tabular-nums">{rel.rating_staff}</strong>
               </span>
             )}
             {peopleAvg != null && (
-              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
+              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
                 <span role="img" aria-label="fire">🔥</span>
                 <strong className="tabular-nums">{peopleAvg}</strong>
               </span>
             )}
             {overallScore != null && (
-              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
+              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
                 <span className="opacity-70">Overall</span>
                 <strong className="tabular-nums">{overallScore}</strong>
               </span>
