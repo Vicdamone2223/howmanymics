@@ -18,7 +18,15 @@ export function getSupabase(): SupabaseClient {
     throw new Error('Supabase anon key missing at runtime');
   }
 
-  _client = createClient(url, key);
+  _client = createClient(url, key, {
+    auth: {
+      persistSession: true,
+      // Key change: stop the built-in auto refresh loop that’s bricking the UI
+      autoRefreshToken: false,
+      detectSessionInUrl: true,
+    },
+  });
+
   return _client;
 }
 
