@@ -51,12 +51,13 @@ type TodayRow = {
 };
 
 type DebateRow = {
+  id: number;                // ⟵ add id so we can count votes
   slug: string;
-  title: string;
+  title: string;             // (your table uses title here)
   a_label: string | null;
   b_label: string | null;
-  a_pct: number | null;
-  b_pct: number | null;
+  a_pct: number | null;      // admin fallback
+  b_pct: number | null;      // admin fallback
   href: string | null;
   is_featured: boolean | null;
   updated_at: string | null;
@@ -71,7 +72,7 @@ export default function Home() {
   const [topYear, setTopYear] = useState<AlbumYearRow[]>([]);
   const [today, setToday] = useState<TodayEvent[]>([]);
 
-  // NOTE: Debate now uses `slug` (no `href` required)
+  // Debate now uses `slug` (no href needed on state)
   const [debate, setDebate] = useState<Debate>({
     slug: '',
     topic: '—',
@@ -138,16 +139,13 @@ export default function Home() {
         const rows = (data ?? []) as ReleaseRow[];
 
         const formatted: AlbumYearRow[] = rows.map((r) => {
-          const ratings = Array.isArray(r.release_ratings)
-            ? r.release_ratings
-            : [];
+          const ratings = Array.isArray(r.release_ratings) ? r.release_ratings : [];
           const pplNums: number[] = ratings
             .map((x) => Number(x.rating))
             .filter((v): v is number => Number.isFinite(v));
           const peopleAvg =
             pplNums.length > 0
-              ? pplNums.reduce((sum: number, n: number) => sum + n, 0) /
-                pplNums.length
+              ? pplNums.reduce((sum: number, n: number) => sum + n, 0) / pplNums.length
               : null;
 
           const staff = r.rating_staff ?? null;
@@ -202,12 +200,13 @@ export default function Home() {
         if (items.length) setToday(items);
       }
 
-      // ------- Debate Spotlight (latest featured, else latest updated) -------
+      // ------- Debate Spotlight (latest featured, else latest updated) ------- //
       {
+        // include id so we can count live votes
         const { data } = await supabase
           .from('debates')
           .select(
-            'slug,title,a_label,b_label,a_pct,b_pct,href,is_featured,updated_at'
+            'id,slug,title,a_label,b_label,a_pct,b_pct,href,is_featured,updated_at'
           )
           .order('is_featured', { ascending: false })
           .order('updated_at', { ascending: false })
@@ -216,13 +215,37 @@ export default function Home() {
         const rows = (data ?? []) as DebateRow[];
         if (rows.length) {
           const d = rows[0];
+
+          // live counts (parallel)
+          const [aRes, bRes] = await Promise.all([
+            supabase
+              .from('debate_votes')
+              .select('*', { head: true, count: 'exact' })
+              .eq('debate_id', d.id)
+              .eq('choice', 'A'),
+            supabase
+              .from('debate_votes')
+              .select('*', { head: true, count: 'exact' })
+              .eq('debate_id', d.id)
+              .eq('choice', 'B'),
+          ]);
+
+          const aCount = aRes.count ?? 0;
+          const bCount = bRes.count ?? 0;
+          const total = aCount + bCount;
+
+          const aPct =
+            total > 0 ? Math.round((aCount * 100) / total) : Number(d.a_pct ?? 0);
+          const bPct =
+            total > 0 ? 100 - aPct : Number(d.b_pct ?? 0);
+
           setDebate({
             slug: d.slug,
             topic: d.title,
             aLabel: d.a_label ?? 'A',
             bLabel: d.b_label ?? 'B',
-            aPct: Number(d.a_pct ?? 0),
-            bPct: Number(d.b_pct ?? 0),
+            aPct,
+            bPct,
           });
         }
       }

@@ -57,23 +57,38 @@ export default function ArtistPage() {
         .select('id,name,slug,card_img_url,origin,years_active,bio,billboard_hot100_entries,platinum,grammys,staff_rank,rating_staff')
         .eq('slug', slug)
         .single();
+
       if (!a) { setLoading(false); setArtist(null); return; }
       setArtist(a as Artist);
 
-      const { data: avgRows } = await supabase.from('artist_ratings').select('rating').eq('artist_id', a.id);
-      if (avgRows?.length) {
-        const nums = avgRows.map((r: any) => Number(r.rating)).filter((n: any) => Number.isFinite(n));
-        setPeopleAvg(nums.length ? Math.round(nums.reduce((s: number, n: number) => s + n, 0) / nums.length) : null);
-      } else setPeopleAvg(null);
+      // People average from artist_ratings(score)
+      {
+        const { data: avgRows } = await supabase
+          .from('artist_ratings')
+          .select('score')
+          .eq('artist_id', a.id);
 
+        if (avgRows?.length) {
+          const nums = avgRows.map((r: any) => Number(r.score)).filter((n: any) => Number.isFinite(n));
+          setPeopleAvg(nums.length ? Math.round(nums.reduce((s: number, n: number) => s + n, 0) / nums.length) : null);
+        } else setPeopleAvg(null);
+      }
+
+      // My rating (if signed in)
       if (email) {
         const { data: mine } = await supabase
           .from('artist_ratings')
-          .select('id,rating')
+          .select('id,score')
           .eq('artist_id', a.id)
           .limit(1);
-        if (mine?.length) { setMyRating({ id: mine[0].id, rating: mine[0].rating }); setInputRating(String(mine[0].rating)); }
-        else { setMyRating(null); setInputRating(''); }
+
+        if (mine?.length) {
+          setMyRating({ id: mine[0].id, rating: mine[0].score });
+          setInputRating(String(mine[0].score));
+        } else {
+          setMyRating(null);
+          setInputRating('');
+        }
       }
 
       // --- Discography: merge junction + legacy source ---
@@ -133,23 +148,33 @@ export default function ArtistPage() {
     setSaving(true);
     try {
       if (myRating) {
-        const { error } = await supabase.from('artist_ratings').update({ rating: clamped }).eq('id', myRating.id);
+        const { error } = await supabase
+          .from('artist_ratings')
+          .update({ score: clamped })     // <-- score
+          .eq('id', myRating.id);
         if (error) throw error;
         setMyRating({ id: myRating.id, rating: clamped });
       } else {
         const { data, error } = await supabase
           .from('artist_ratings')
-          .insert({ artist_id: artist.id, rating: clamped })
-          .select('id,rating')
+          .insert({ artist_id: artist.id, score: clamped })  // <-- score
+          .select('id,score')
           .single();
         if (error) throw error;
-        setMyRating({ id: data.id, rating: data.rating });
+        setMyRating({ id: data.id, rating: data.score });
       }
-      const { data: avgRows } = await supabase.from('artist_ratings').select('rating').eq('artist_id', artist.id);
+
+      // refresh people average
+      const { data: avgRows } = await supabase
+        .from('artist_ratings')
+        .select('score')
+        .eq('artist_id', artist.id);
+
       if (avgRows?.length) {
-        const nums = avgRows.map((r: any) => Number(r.rating)).filter(Number.isFinite);
+        const nums = avgRows.map((r: any) => Number(r.score)).filter(Number.isFinite);
         setPeopleAvg(nums.length ? Math.round(nums.reduce((s: number, n: number) => s + n, 0) / nums.length) : null);
       } else setPeopleAvg(null);
+
       alert('Saved your rating.');
     } catch (err: any) {
       alert(err.message || 'Could not save rating.');
@@ -163,12 +188,22 @@ export default function ArtistPage() {
     if (!confirm('Remove your rating?')) return;
     setSaving(true);
     try {
-      const { error } = await supabase.from('artist_ratings').delete().eq('id', myRating.id);
+      const { error } = await supabase
+        .from('artist_ratings')
+        .delete()
+        .eq('id', myRating.id);
       if (error) throw error;
-      setMyRating(null); setInputRating('');
-      const { data: avgRows } = await supabase.from('artist_ratings').select('rating').eq('artist_id', artist.id);
+
+      setMyRating(null);
+      setInputRating('');
+
+      const { data: avgRows } = await supabase
+        .from('artist_ratings')
+        .select('score')
+        .eq('artist_id', artist.id);
+
       if (avgRows?.length) {
-        const nums = avgRows.map((r: any) => Number(r.rating)).filter(Number.isFinite);
+        const nums = avgRows.map((r: any) => Number(r.score)).filter(Number.isFinite);
         setPeopleAvg(nums.length ? Math.round(nums.reduce((s: number, n: number) => s + n, 0) / nums.length) : null);
       } else setPeopleAvg(null);
     } catch (err: any) {

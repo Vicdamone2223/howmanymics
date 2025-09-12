@@ -5,19 +5,13 @@ import { useEffect, useMemo, useState } from 'react';
 import Script from 'next/script';
 import { supabase } from '@/lib/supabaseClient';
 
-type VerseRowBase = {
+type VerseRow = {
   id: number;
-  month: string | null;       // 'YYYY-MM'
+  month: string | null;          // 'YYYY-MM'
   artist_name: string | null;
   song_title: string | null;
-  is_active?: boolean | null; // may not exist
+  instagram_url: string | null;  // <-- matches your table
   created_at: string | null;
-};
-
-// We'll read either ig_url OR instagram_url (whichever your table has)
-type VerseRow = VerseRowBase & {
-  ig_url?: string | null;
-  instagram_url?: string | null;
 };
 
 declare global {
@@ -50,74 +44,30 @@ export default function VerseOfMonth() {
     (async () => {
       setLoading(true);
 
-      let got: VerseRow[] | null = null;
-
-      // Try a few safe query shapes depending on which columns exist.
-      // 1) ig_url + is_active
-      const q1 = await supabase
+      const { data, error } = await supabase
         .from('verse_of_month')
-        .select('id,month,artist_name,song_title,ig_url,is_active,created_at')
-        .order('is_active', { ascending: false })
+        .select('id,month,artist_name,song_title,instagram_url,created_at')
         .order('created_at', { ascending: false })
         .limit(1);
 
-      if (!q1.error) {
-        got = (q1.data ?? []) as VerseRow[];
-      } else {
-        // 2) ig_url only
-        const q2 = await supabase
-          .from('verse_of_month')
-          .select('id,month,artist_name,song_title,ig_url,created_at')
-          .order('created_at', { ascending: false })
-          .limit(1);
+      if (!error && data?.length) setRow(data[0] as VerseRow);
+      else setRow(null);
 
-        if (!q2.error) {
-          got = (q2.data ?? []) as VerseRow[];
-        } else {
-          // 3) instagram_url + is_active
-          const q3 = await supabase
-            .from('verse_of_month')
-            .select('id,month,artist_name,song_title,instagram_url,is_active,created_at')
-            .order('is_active', { ascending: false })
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (!q3.error) {
-            got = (q3.data ?? []) as VerseRow[];
-          } else {
-            // 4) instagram_url only
-            const q4 = await supabase
-              .from('verse_of_month')
-              .select('id,month,artist_name,song_title,instagram_url,created_at')
-              .order('created_at', { ascending: false })
-              .limit(1);
-
-            if (!q4.error) {
-              got = (q4.data ?? []) as VerseRow[];
-            } else {
-              console.error('verse_of_month fetch failed:', q4.error.message);
-            }
-          }
-        }
-      }
-
-      setRow(got?.[0] ?? null);
       setLoading(false);
     })();
   }, []);
 
-  const permalink = useMemo(() => {
-    const url = row?.ig_url ?? row?.instagram_url ?? null;
-    return toInstagramPermalink(url);
-  }, [row?.ig_url, row?.instagram_url]);
+  const permalink = useMemo(
+    () => toInstagramPermalink(row?.instagram_url ?? null),
+    [row?.instagram_url]
+  );
 
   useEffect(() => {
     // (re)process Instagram markup whenever the embed url changes
     window?.instgrm?.Embeds?.process?.();
   }, [permalink]);
 
-  if (loading) return null;
-  if (!row) return null; // no configured verse → hide the section
+  if (loading || !row) return null;
 
   const mm = row.month || new Date().toISOString().slice(0, 7);
   const artist = row.artist_name || 'Unknown Artist';
