@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import ClientShell from '@/components/ClientShell'; // <-- normal import (no dynamic)
+import ClientShell from '@/components/ClientShell';
 
 export const metadata: Metadata = {
   title: 'How Many Mics',
