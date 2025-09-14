@@ -76,7 +76,10 @@ function ArtistPicker({
 
   const shown = useMemo(() => {
     const term = q.trim();
-    if (!term) return all.slice(0, 300);
+    if (!term) {
+      // Increase the cap so you can scroll beyond “M”
+      return all.slice(0, 2000);
+    }
     const tSlug = slugify(term);
     const tLower = term.toLowerCase();
     const res = all.filter((a) => {
@@ -88,7 +91,7 @@ function ArtistPicker({
       const cur = all.find((r) => String(r.id) === String(value));
       if (cur) res.unshift(cur);
     }
-    return res.slice(0, 300);
+    return res.slice(0, 2000);
   }, [all, q, value]);
 
   return (
@@ -99,7 +102,11 @@ function ArtistPicker({
         value={q}
         onChange={(e) => setQ(e.target.value)}
       />
-      <select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
+      <select
+        className="input select-fix"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
         <option value="">— Select artist —</option>
         {shown.map((a) => (
           <option key={String(a.id)} value={String(a.id)}>
@@ -108,6 +115,9 @@ function ArtistPicker({
         ))}
       </select>
       {loading && <span className="text-xs opacity-70">Loading artists…</span>}
+      {!loading && !q && all.length > 2000 && (
+        <span className="text-xs opacity-70">Tip: type to narrow the list.</span>
+      )}
     </div>
   );
 }
@@ -255,13 +265,20 @@ export default function AdminPage() {
     const baseSlug = slugify(rSlug || rTitle) || 'untitled';
     const finalSlug = await ensureUniqueReleaseSlug(baseSlug);
 
+    // Track arrays (strip empties)
     const disc1 = tracks1.map((t) => t.trim()).filter(Boolean);
     const disc2 = tracks2.map((t) => t.trim()).filter(Boolean);
+
+    // IMPORTANT: if your DB column `tracks_disc1` is NOT NULL, send [] (not null)
+    const tracksPayload = {
+      tracks_disc1: disc1.length ? disc1 : [],
+      tracks_disc2: rDouble ? (disc2.length ? disc2 : []) : null,
+    };
 
     const base = {
       title: rTitle.trim(),
       slug: finalSlug,
-      artist_id: rArtistId,
+      artist_id: rArtistId || null,
       year: rYear === '' ? null : rYear,
       cover_url: rCover.trim() || null,
       producers: toArray(rProducers),
@@ -269,28 +286,12 @@ export default function AdminPage() {
       youtube_id: rYouTube.trim() || null,
       is_double_album: rDouble,
       riaa_cert: rRIAA.trim() || null,
+      ...tracksPayload,
     };
 
-    const { data: inserted, error: insErr } = await supabase
-      .from('releases')
-      .insert(base)
-      .select('id')
-      .single();
-
+    const { error: insErr } = await supabase.from('releases').insert(base);
     if (insErr) {
       alert(insErr.message || 'Could not add release.');
-      return;
-    }
-
-    const updatePayload = {
-      tracks_disc1: disc1.length ? disc1 : null,
-      tracks_disc2: rDouble ? (disc2.length ? disc2 : null) : null,
-    };
-
-    const { error: upErr } = await supabase.from('releases').update(updatePayload).eq('id', inserted.id);
-
-    if (upErr) {
-      alert(upErr.message || 'Release saved, but tracklist failed to save.');
       return;
     }
 
@@ -549,10 +550,17 @@ export default function AdminPage() {
         .input:focus {
           box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.35);
         }
-        .input option {
-          color: #0a0a0a;
-          background: #f4f4f5;
+
+        /* Force readable colors for native <select> popup and its options */
+        select.input.select-fix {
+          color: #f4f4f5;           /* closed select text */
+          background: #0a0a0a;
         }
+        select.input.select-fix option {
+          color: #0a0a0a !important; /* option rows in popup */
+          background: #ffffff !important;
+        }
+
         .btn {
           background: #f97316;
           color: #000;
