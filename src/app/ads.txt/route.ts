@@ -12,7 +12,7 @@ export async function GET() {
       status: 200,
     });
   } catch {
-    // Fallback: serve empty file so crawlers at least get 200 text/plain
+    // Serve empty text/plain with 200 so crawlers don't get a 404
     return new Response('', {
       headers: { 'content-type': 'text/plain; charset=utf-8' },
       status: 200,
