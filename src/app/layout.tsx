@@ -25,7 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
-        {/* ✅ Ezoic Privacy + Header scripts (already added earlier) */}
+        {/* ✅ Ezoic Privacy + Header scripts */}
         <Script
           src="https://cmp.gatekeeperconsent.com/min.js"
           data-cfasync="false"
@@ -50,24 +50,40 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
 
       <body className="min-h-screen bg-zinc-950 text-zinc-100">
-        {/* 🔝 Ezoic Top of Page Ad */}
-        <div id="ezoic-pub-ad-placeholder-101"></div>
+        {/* 🔝 Ezoic Top of Page Placeholder */}
+        <div id="ezoic-pub-ad-placeholder-101" />
 
         <Suspense fallback={null}>
           <GA />
           <ClientShell>{children}</ClientShell>
         </Suspense>
 
-        {/* 🔚 Ezoic Bottom of Page Ad */}
-        <div id="ezoic-pub-ad-placeholder-103"></div>
+        {/* 🔚 Ezoic Bottom of Page Placeholder */}
+        <div id="ezoic-pub-ad-placeholder-103" />
 
-        {/* Organization JSON-LD */}
+        {/* JSON-LD */}
         <Script
           id="org-jsonld"
           type="application/ld+json"
           strategy="afterInteractive"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }}
         />
+
+        {/* ✅ Ezoic: render both placements after page becomes interactive */}
+        <Script id="ezoic-showads" strategy="afterInteractive">
+          {`
+            try {
+              window.ezstandalone = window.ezstandalone || {};
+              ezstandalone.cmd = ezstandalone.cmd || [];
+              ezstandalone.cmd.push(function () {
+                // Pass every placement ID you have on the page
+                ezstandalone.showAds(101, 103);
+              });
+            } catch (e) {
+              console && console.error && console.error('Ezoic showAds error:', e);
+            }
+          `}
+        </Script>
       </body>
     </html>
   );
