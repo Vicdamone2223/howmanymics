@@ -69,19 +69,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }}
         />
 
-        {/* ✅ Ezoic: render both placements after page becomes interactive */}
+        {/* ✅ Ezoic: render all placeholders after page is interactive (with retry) */}
         <Script id="ezoic-showads" strategy="afterInteractive">
           {`
-            try {
-              window.ezstandalone = window.ezstandalone || {};
-              ezstandalone.cmd = ezstandalone.cmd || [];
-              ezstandalone.cmd.push(function () {
-                // Pass every placement ID you have on the page
-                ezstandalone.showAds(101, 103);
-              });
-            } catch (e) {
-              console && console.error && console.error('Ezoic showAds error:', e);
-            }
+            (function () {
+              try {
+                window.ezstandalone = window.ezstandalone || {};
+                ezstandalone.cmd = ezstandalone.cmd || [];
+                var fire = function () { 
+                  try { ezstandalone.showAds(); } catch (e) {} 
+                };
+                ezstandalone.cmd.push(fire);
+                // Retry once after 3s in case script loads late
+                setTimeout(fire, 3000);
+              } catch (e) {}
+            })();
           `}
         </Script>
       </body>
