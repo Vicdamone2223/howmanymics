@@ -1,20 +1,15 @@
-// src/app/reviews/page.tsx  (SERVER)
 import type { Metadata } from 'next';
 import PageClient from './PageClient';
+import { buildMetadata } from '@/lib/seo';
 
-export const metadata: Metadata = {
-  title: 'Reviews | How Many Mics',
-  description: 'Latest staff reviews and coverage of hip-hop albums.',
-  openGraph: {
-    title: 'Reviews | How Many Mics',
-    description: 'Latest staff reviews and coverage of hip-hop albums.',
-  },
-  twitter: {
-    card: 'summary',
-    title: 'Reviews | How Many Mics',
-    description: 'Latest staff reviews and coverage of hip-hop albums.',
-  },
-};
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.howmanymics.com';
+
+export const metadata: Metadata = buildMetadata({
+  baseTitle: 'Reviews | How Many Mics',
+  baseDescription: 'All album reviews from How Many Mics.',
+  canonical: `${SITE_URL}/reviews`,
+  ogImage: null,
+});
 
 export default function Page() {
   return <PageClient />;

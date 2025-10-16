@@ -5,6 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 
+type RareClip = { title: string; url: string };
+
 type Artist = {
   id: string | number;
   name: string;
@@ -18,7 +20,27 @@ type Artist = {
   grammys: number | null;
   staff_rank: number | null;     // ordinal
   rating_staff: number | null;   // 50..100
+  // NEW
+  seo_title: string | null;
+  seo_description: string | null;
+  bio_long_intro: string | null;
+  bio_long_early: string | null;
+  bio_long_mixtapes: string | null;
+  bio_long_albums: string | null;
+  bio_long_business: string | null;
+  bio_long_legacy: string | null;
+  bio_sources: string | null;
+  rare_clips: RareClip[] | null;
 };
+
+function slugify(s: string) {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\p{Letter}\p{Number}\s-]/gu, '')
+    .trim()
+    .replace(/\s+/g, '-');
+}
 
 export default function EditArtistPage() {
   const params = useParams();
@@ -42,6 +64,18 @@ export default function EditArtistPage() {
   const [grammys, setGrammys] = useState<number | ''>('');
   const [rank, setRank] = useState<number | ''>('');
   const [staffScore, setStaffScore] = useState<string>(''); // free typing
+
+  // NEW: SEO + long-form + clips
+  const [seoTitle, setSeoTitle] = useState('');
+  const [seoDesc, setSeoDesc] = useState('');
+  const [intro, setIntro] = useState('');
+  const [early, setEarly] = useState('');
+  const [mixtapes, setMixtapes] = useState('');
+  const [albums, setAlbums] = useState('');
+  const [business, setBusiness] = useState('');
+  const [legacy, setLegacy] = useState('');
+  const [sources, setSources] = useState('');
+  const [clips, setClips] = useState<RareClip[]>([{ title: '', url: '' }]);
 
   useEffect(() => {
     (async () => {
@@ -72,6 +106,17 @@ export default function EditArtistPage() {
         setGrammys(art.grammys ?? '');
         setRank(art.staff_rank ?? '');
         setStaffScore(art.rating_staff != null ? String(art.rating_staff) : '');
+
+        setSeoTitle(art.seo_title || '');
+        setSeoDesc(art.seo_description || '');
+        setIntro(art.bio_long_intro || '');
+        setEarly(art.bio_long_early || '');
+        setMixtapes(art.bio_long_mixtapes || '');
+        setAlbums(art.bio_long_albums || '');
+        setBusiness(art.bio_long_business || '');
+        setLegacy(art.bio_long_legacy || '');
+        setSources(art.bio_sources || '');
+        setClips((art.rare_clips && art.rare_clips.length ? art.rare_clips : [{ title: '', url: '' }]).slice());
       }
       setLoading(false);
     })();
@@ -84,7 +129,7 @@ export default function EditArtistPage() {
   async function handleAvatarUpload(file: File){
     try {
       setUploading(true);
-      const safeSlug = (slug || name).toLowerCase().replace(/[^a-z0-9\s-]/g,'').trim().replace(/\s+/g,'-');
+      const safeSlug = slugify(slug || name);
       const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
       const path = `artists/${safeSlug}-${Date.now()}.${ext}`;
       const { error: upErr } = await supabase.storage.from('assets').upload(path, file, { upsert: false, cacheControl: '3600' });
@@ -99,14 +144,12 @@ export default function EditArtistPage() {
     }
   }
 
-  function toIntOrNull(v: number | '') { return v === '' ? null : Number(v); }
+  const toIntOrNull = (v: number | '') => (v === '' ? null : Number(v));
 
-  async function save(e: React.FormEvent) {
+  async function saveBasics(e: React.FormEvent) {
     e.preventDefault();
+    if (!a) return;
 
-    if (!a) return; // <-- guard to satisfy TS
-
-    // Clamp rating only on submit (no min/max while typing)
     const parsed = parseInt(staffScore, 10);
     const clampedStaff = Number.isFinite(parsed) ? Math.max(50, Math.min(100, parsed)) : null;
 
@@ -126,12 +169,39 @@ export default function EditArtistPage() {
 
     const { error } = await supabase.from('artists').update(payload).eq('id', a.id);
     if (error) return alert(error.message);
-    alert('Saved');
+    alert('Saved basics');
+    router.refresh();
+  }
+
+  async function saveSeoBio(e: React.FormEvent) {
+    e.preventDefault();
+    if (!a) return;
+
+    const cleanedClips = (clips || [])
+      .map(rc => ({ title: (rc.title || '').trim(), url: (rc.url || '').trim() }))
+      .filter(rc => rc.title || rc.url);
+
+    const payload = {
+      seo_title: seoTitle.trim() || null,
+      seo_description: seoDesc.trim() || null,
+      bio_long_intro: intro.trim() || null,
+      bio_long_early: early.trim() || null,
+      bio_long_mixtapes: mixtapes.trim() || null,
+      bio_long_albums: albums.trim() || null,
+      bio_long_business: business.trim() || null,
+      bio_long_legacy: legacy.trim() || null,
+      bio_sources: sources.trim() || null,
+      rare_clips: cleanedClips,
+    };
+
+    const { error } = await supabase.from('artists').update(payload).eq('id', a.id);
+    if (error) return alert(error.message);
+    alert('Saved SEO, long-form, and clips');
     router.refresh();
   }
 
   async function remove() {
-    if (!a) return; // <-- guard to satisfy TS
+    if (!a) return;
     if (!confirm('Delete this artist? This cannot be undone.')) return;
     const { error } = await supabase.from('artists').delete().eq('id', a.id);
     if (error) return alert(error.message);
@@ -146,13 +216,13 @@ export default function EditArtistPage() {
         <Link href="/admin/artists" className="text-sm opacity-80 hover:opacity-100">← Back to list</Link>
       </div>
 
-      <form onSubmit={save} className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-zinc-800 p-4">
-        <input className="input" placeholder="Name" value={name} onChange={e=>setName(e.target.value)} required />
-        <input className="input" placeholder="Slug" value={slug} onChange={e=>setSlug(e.target.value)} required />
+      {/* Basics */}
+      <form onSubmit={saveBasics} className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-zinc-800 p-4">
+        <input className="input" placeholder="Name" value={name} onChange={(e)=>setName(e.target.value)} required />
+        <input className="input" placeholder="Slug" value={slug} onChange={(e)=>setSlug(e.target.value)} required />
 
-        {/* Avatar URL + Upload */}
         <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-start">
-          <input className="input" placeholder="Card image URL" value={img} onChange={e=>setImg(e.target.value)} />
+          <input className="input" placeholder="Card image URL" value={img} onChange={(e)=>setImg(e.target.value)} />
           <label className="inline-flex items-center gap-2 cursor-pointer">
             <input type="file" accept="image/*" className="hidden"
                    onChange={(e)=>{ const f=e.target.files?.[0]; if (f) handleAvatarUpload(f); }} />
@@ -166,9 +236,9 @@ export default function EditArtistPage() {
           </div>
         )}
 
-        <input className="input" placeholder="Origin" value={origin} onChange={e=>setOrigin(e.target.value)} />
-        <input className="input" placeholder="Years active" value={years} onChange={e=>setYears(e.target.value)} />
-        <textarea className="input sm:col-span-2" placeholder="Short bio" value={bio} onChange={e=>setBio(e.target.value)} />
+        <input className="input" placeholder="Origin" value={origin} onChange={(e)=>setOrigin(e.target.value)} />
+        <input className="input" placeholder="Years active" value={years} onChange={(e)=>setYears(e.target.value)} />
+        <textarea className="input sm:col-span-2" placeholder="Short bio" value={bio} onChange={(e)=>setBio(e.target.value)} />
 
         <input type="number" className="input" placeholder="Billboard Hot 100 entries"
                value={hot100} onChange={e=>setHot100(e.target.value === '' ? '' : parseInt(e.target.value))} />
@@ -180,17 +250,84 @@ export default function EditArtistPage() {
         <input type="number" className="input" placeholder="Staff Rank (1..N)"
                value={rank} onChange={e=>setRank(e.target.value === '' ? '' : parseInt(e.target.value))} />
 
-        {/* NEW: Staff Rating (free typing, clamp on submit) */}
         <input type="number" inputMode="numeric" className="input sm:col-span-2"
                placeholder="Staff Rating (50–100)"
                value={staffScore} onChange={e=>setStaffScore(e.target.value)} />
 
         <div className="sm:col-span-2 flex items-center gap-3 pt-2">
-          <button type="submit" className="btn">Save</button>
+          <button type="submit" className="btn">Save basics</button>
           <button type="button" onClick={remove}
                   className="px-3 py-2 text-sm rounded border border-red-700 text-red-400 hover:bg-red-950/40">
             Delete
           </button>
+        </div>
+      </form>
+
+      {/* SEO + Long form + Rare Clips */}
+      <form onSubmit={saveSeoBio} className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-zinc-800 p-4">
+        <h2 className="text-lg font-bold">SEO, Long-form Bio & Rare Clips</h2>
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          <input className="input" placeholder="SEO Title" value={seoTitle} onChange={e=>setSeoTitle(e.target.value)} />
+          <input className="input" placeholder="SEO Description" value={seoDesc} onChange={e=>setSeoDesc(e.target.value)} />
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          <textarea className="input" placeholder="Intro / Overview" value={intro} onChange={e=>setIntro(e.target.value)} />
+          <textarea className="input" placeholder="Early life & come-up" value={early} onChange={e=>setEarly(e.target.value)} />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <textarea className="input" placeholder="Mixtape era" value={mixtapes} onChange={e=>setMixtapes(e.target.value)} />
+          <textarea className="input" placeholder="Albums & runs" value={albums} onChange={e=>setAlbums(e.target.value)} />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <textarea className="input" placeholder="Business & label" value={business} onChange={e=>setBusiness(e.target.value)} />
+          <textarea className="input" placeholder="Legacy & influence" value={legacy} onChange={e=>setLegacy(e.target.value)} />
+        </div>
+
+        <textarea className="input" placeholder="Sources (one URL per line)" value={sources} onChange={e=>setSources(e.target.value)} />
+
+        <div className="mt-2">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold">Rare Clips</h3>
+            <button
+              type="button"
+              className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900"
+              onClick={() => setClips(prev => [...prev, { title: '', url: '' }])}
+            >
+              + Add clip
+            </button>
+          </div>
+          <ul className="space-y-2">
+            {clips.map((rc, i) => (
+              <li key={i} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+                <input
+                  className="input"
+                  placeholder="Title (e.g., 2004 radio freestyle)"
+                  value={rc.title}
+                  onChange={e => setClips(prev => prev.map((x, idx) => idx === i ? { ...x, title: e.target.value } : x))}
+                />
+                <input
+                  className="input"
+                  placeholder="URL (YouTube/Vimeo/etc.)"
+                  value={rc.url}
+                  onChange={e => setClips(prev => prev.map((x, idx) => idx === i ? { ...x, url: e.target.value } : x))}
+                />
+                <button
+                  type="button"
+                  className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900"
+                  onClick={() => setClips(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev)}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button type="submit" className="btn">Save SEO, Bio & Clips</button>
+          <span className="text-xs opacity-70">Tip: Markdown is fine; we sanitize on render.</span>
         </div>
       </form>
 

@@ -1,4 +1,3 @@
-// src/app/admin/articles/new/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -29,16 +28,20 @@ export default function NewArticlePage() {
   const [authorName, setAuthorName] = useState('');
   const [authorSlug, setAuthorSlug] = useState('');
   const [featured, setFeatured] = useState(false);
-  const [publishedDate, setPublishedDate] = useState(''); // YYYY-MM-DD (date-only)
+  const [publishedDate, setPublishedDate] = useState(''); // YYYY-MM-DD
   const [bodyMd, setBodyMd] = useState('');
 
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       const { data: isAdmin, error } = await supabase.rpc('me_is_admin');
-      if (error) { console.error(error); setOk(false); return; }
+      if (error) {
+        setOk(false);
+        return;
+      }
       setOk(!!isAdmin);
     })();
   }, []);
@@ -61,10 +64,29 @@ export default function NewArticlePage() {
   }
   function dateToTzMidnight(dateStr: string | null) {
     if (!dateStr) return null;
-    // Store as midnight UTC for consistency (no time picker needed)
-    // e.g., "2025-10-31T00:00:00.000Z"
     const d = new Date(`${dateStr}T00:00:00.000Z`);
     return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  async function handleCoverUpload(file: File) {
+    try {
+      setUploading(true);
+      const baseSlug = slugify(slug || title || 'article');
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+      const path = `articles/${baseSlug}-${Date.now()}.${ext}`;
+
+      const { error: upErr } = await supabase.storage
+        .from('assets')
+        .upload(path, file, { upsert: false, cacheControl: '3600' });
+      if (upErr) throw upErr;
+
+      const { data: pub } = supabase.storage.from('assets').getPublicUrl(path);
+      if (pub?.publicUrl) setCoverUrl(pub.publicUrl);
+    } catch (e: any) {
+      alert(e?.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
   }
 
   async function submit(e: React.FormEvent) {
@@ -110,46 +132,85 @@ export default function NewArticlePage() {
     <main className="mx-auto max-w-3xl p-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-extrabold">New Article</h1>
-        <Link href="/admin/articles" className="text-sm opacity-80 hover:opacity-100 underline">← Back</Link>
+        <Link href="/admin/articles" className="text-sm opacity-80 hover:opacity-100 underline">
+          ← Back
+        </Link>
       </div>
 
-      {err && <div className="mb-4 text-sm rounded-lg border border-red-800 bg-red-950/40 p-3 text-red-300">{err}</div>}
+      {err && (
+        <div className="mb-4 text-sm rounded-lg border border-red-800 bg-red-950/40 p-3 text-red-300">
+          {err}
+        </div>
+      )}
 
       <form onSubmit={submit} className="grid grid-cols-1 gap-3">
-        <input className="input" placeholder="Title" value={title} onChange={e=>setTitle(e.target.value)} required />
-        <input className="input" placeholder="Slug (auto or edit)" value={slug} onChange={e=>setSlug(e.target.value)} />
+        <input className="input" placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} required />
+        <input className="input" placeholder="Slug (auto or edit)" value={slug} onChange={(e) => setSlug(e.target.value)} />
 
-        <input className="input" placeholder="Dek (short kicker above title)" value={dek} onChange={e=>setDek(e.target.value)} />
-        <textarea className="input" placeholder="Excerpt (1–2 sentences)" value={excerpt} onChange={e=>setExcerpt(e.target.value)} />
+        <input className="input" placeholder="Dek (short kicker above title)" value={dek} onChange={(e) => setDek(e.target.value)} />
+        <textarea className="input" placeholder="Excerpt (1–2 sentences)" value={excerpt} onChange={(e) => setExcerpt(e.target.value)} />
 
-        <input className="input" placeholder="Cover image URL" value={coverUrl} onChange={e=>setCoverUrl(e.target.value)} />
+        {/* Cover upload + URL field */}
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-start">
+          <input className="input" placeholder="Cover image URL" value={coverUrl} onChange={(e) => setCoverUrl(e.target.value)} />
+          <label className={`inline-flex items-center gap-2 ${uploading ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={uploading}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleCoverUpload(f);
+              }}
+            />
+            <span className="btn">{uploading ? 'Uploading…' : 'Upload cover'}</span>
+          </label>
+        </div>
+
+        {coverUrl ? (
+          <div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={coverUrl}
+              alt="Cover preview"
+              className="h-36 rounded-lg object-cover border border-zinc-800"
+            />
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <input className="input" placeholder="Author name" value={authorName} onChange={e=>setAuthorName(e.target.value)} />
-          <input className="input" placeholder="Author slug (auto)" value={authorSlug} onChange={e=>setAuthorSlug(e.target.value)} />
+          <input className="input" placeholder="Author name" value={authorName} onChange={(e) => setAuthorName(e.target.value)} />
+          <input className="input" placeholder="Author slug (auto)" value={authorSlug} onChange={(e) => setAuthorSlug(e.target.value)} />
         </div>
 
         <label className="inline-flex items-center gap-2 select-none">
-          <input type="checkbox" checked={featured} onChange={e=>setFeatured(e.target.checked)} />
+          <input type="checkbox" checked={featured} onChange={(e) => setFeatured(e.target.checked)} />
           <span className="text-sm">Show in homepage slider</span>
         </label>
 
-        {/* Date-only (no time picker) */}
         <div>
           <div className="text-xs opacity-70 mb-1">Publish date (optional)</div>
           <input
             type="date"
             className="input"
             value={publishedDate}
-            onChange={e=>setPublishedDate(e.target.value)}
+            onChange={(e) => setPublishedDate(e.target.value)}
           />
           <div className="text-xs opacity-60 mt-1">If empty, the post remains unpublished (draft).</div>
         </div>
 
-        <textarea className="input min-h-[180px]" placeholder="Body (Markdown optional)" value={bodyMd} onChange={e=>setBodyMd(e.target.value)} />
+        <textarea
+          className="input min-h-[180px]"
+          placeholder="Body (Markdown optional)"
+          value={bodyMd}
+          onChange={(e) => setBodyMd(e.target.value)}
+        />
 
         <div className="pt-2">
-          <button className="btn" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Create Article'}</button>
+          <button className="btn" type="submit" disabled={saving}>
+            {saving ? 'Saving…' : 'Create Article'}
+          </button>
         </div>
       </form>
 

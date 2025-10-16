@@ -49,8 +49,7 @@ export default function AccountSettingsPage() {
       <main className="mx-auto max-w-3xl px-4 py-8">
         <h1 className="text-2xl font-extrabold mb-2">Settings</h1>
         <p className="opacity-80">
-          You’re not signed in.{' '}
-          <Link href="/login" className="underline">Sign in</Link>.
+          You’re not signed in. <Link href="/login" className="underline">Sign in</Link>.
         </p>
       </main>
     );
@@ -70,7 +69,7 @@ export default function AccountSettingsPage() {
             type="email"
             placeholder="your@email.com"
           />
-        <button className="rounded-lg bg-zinc-900 text-white font-semibold px-4 py-2">
+          <button className="rounded-lg bg-zinc-900 text-white font-semibold px-4 py-2">
             Update
           </button>
         </form>

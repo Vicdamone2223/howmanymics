@@ -1,60 +1,19 @@
-// src/app/artist/[slug]/page.tsx
-'use client';
+// src/app/artist/[slug]/PageClient.tsx
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { notFound, useParams } from 'next/navigation';
-import { supabase } from '@/lib/supabaseClient';
-import SeoJsonLd from '@/components/SeoJsonLd';
-import type { Metadata } from 'next';
-import { createClient } from '@supabase/supabase-js';
-import { absUrl, SITE_NAME } from '@/lib/seo';
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { supabase } from "@/lib/supabaseClient";
+import Rating from "@/components/Rating";
 
-// ---- Server-side metadata (runs before client component) ----
-const supaForMeta = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+type RareClip = {
+  id?: number | string;
+  artist_id?: number | string;
+  title: string;
+  url: string;
+  kind?: "interview" | "freestyle" | "performance" | "other" | null;
+};
 
-export async function generateMetadata(
-  { params }: { params: { slug: string } }
-): Promise<Metadata> {
-  const { data } = await supaForMeta
-    .from('artists')
-    .select('name,slug,card_img_url,meta_title,meta_description,og_image,noindex')
-    .eq('slug', params.slug)
-    .single();
-
-  if (!data) return { title: 'Artist not found' };
-
-  const title = data.meta_title || `${data.name} • Artist profile`;
-  const description =
-    data.meta_description ||
-    `Discover discography, stats and rankings for ${data.name} on ${SITE_NAME}.`;
-  const image = data.og_image || data.card_img_url || '/placeholder/nas-card.jpg';
-
-  return {
-    title,
-    description,
-    alternates: { canonical: absUrl(`/artist/${data.slug}`) },
-    openGraph: {
-      title,
-      description,
-      url: absUrl(`/artist/${data.slug}`),
-      images: [{ url: absUrl(image) }],
-      type: 'profile',
-    },
-    twitter: {
-      title,
-      description,
-      images: [absUrl(image)],
-      card: 'summary_large_image',
-    },
-    robots: data.noindex ? { index: false, follow: false } : { index: true, follow: true },
-  };
-}
-
-// ---- Types used by the client component ----
 type Artist = {
   id: number | string;
   name: string;
@@ -63,349 +22,391 @@ type Artist = {
   origin: string | null;
   years_active: string | null;
   bio: string | null;
-  billboard_hot100_entries: number | null;
-  platinum: number | null;
-  grammys: number | null;
-  staff_rank: number | null;
-  rating_staff?: number | null;
+  rating_staff: number | null;
+
+  // Achievements
+  billboard_hot100_entries?: number | null;
+  platinum?: number | null;
+  grammys?: number | null;
+
+  // SEO + long form
+  seo_title?: string | null;
+  seo_description?: string | null;
+
+  bio_long_intro?: string | null;
+  bio_long_early?: string | null;
+  bio_long_mixtapes?: string | null;
+  bio_long_albums?: string | null;
+  bio_long_business?: string | null;
+  bio_long_legacy?: string | null;
+  bio_sources?: string | null;
+
+  // JSON fallback for rare clips
+  rare_clips?: RareClip[] | null;
 };
 
-type ReleaseRow = {
+type Release = {
   id: number | string;
   title: string;
   slug: string;
-  cover_url: string | null;
   year: number | null;
-  rating_staff: number | null;
-  release_ratings?: { rating: number }[];
+  cover_url: string | null;
 };
 
-type MyRating = { rating: number; id: string };
+type NameSlug = { name: string; slug: string };
 
-export default function ArtistPage() {
-  const { slug } = useParams<{ slug: string }>();
+// ---------- linkify helpers ----------
+function escapeRegExp(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function makeNameRegex(names: string): RegExp | null {
+  if (!names) return null;
+  return new RegExp(`(^|[^\\p{L}])(${names})(?=$|[^\\p{L}])`, "giu");
+}
+function linkifyText(
+  text: string,
+  index: Map<string, string>,
+  currentSlug?: string
+): ReactNode {
+  if (!text) return text;
 
+  const names = Array.from(index.keys())
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp)
+    .join("|");
+
+  const rx = makeNameRegex(names);
+  if (!rx) return text;
+
+  const out: ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = rx.exec(text)) !== null) {
+    const matchStart = m.index;
+    const beforeSep = m[1] ?? "";
+    const matchedName = m[2] ?? "";
+
+    if (matchStart > last) out.push(text.slice(last, matchStart));
+    if (beforeSep) out.push(beforeSep);
+
+    const slug = index.get(matchedName.toLowerCase());
+    const shouldLink = slug && slug !== currentSlug;
+    const key = `${slug || "txt"}-${last}-${rx.lastIndex}`;
+
+    out.push(
+      shouldLink ? (
+        <Link key={key} href={`/artist/${slug}`} className="underline hover:opacity-100 opacity-90">
+          {matchedName}
+        </Link>
+      ) : (
+        matchedName
+      )
+    );
+
+    last = rx.lastIndex;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+// -------------------------------------
+
+export default function PageClient({ slug }: { slug: string }) {
   const [loading, setLoading] = useState(true);
   const [artist, setArtist] = useState<Artist | null>(null);
-  const [releases, setReleases] = useState<(ReleaseRow & { people_avg: number | null })[]>([]);
-  const [sessionEmail, setSessionEmail] = useState<string | null>(null);
+  const [albums, setAlbums] = useState<Release[]>([]);
+  const [clips, setClips] = useState<RareClip[]>([]);
 
-  const [myRating, setMyRating] = useState<MyRating | null>(null);
-  const [peopleAvg, setPeopleAvg] = useState<number | null>(null);
-  const [inputRating, setInputRating] = useState<string>('');
-  const [saving, setSaving] = useState(false);
+  // name → slug index for linkifying
+  const [nameIndex, setNameIndex] = useState<Map<string, string>>(new Map());
+  const [namesLoaded, setNamesLoaded] = useState(false);
 
   useEffect(() => {
     (async () => {
-      const { data: sess } = await supabase.auth.getSession();
-      const email = sess.session?.user?.email ?? null;
-      setSessionEmail(email);
+      setLoading(true);
 
-      const { data: a } = await supabase
-        .from('artists')
-        .select('id,name,slug,card_img_url,origin,years_active,bio,billboard_hot100_entries,platinum,grammys,staff_rank,rating_staff')
-        .eq('slug', slug)
+      const { data: aRow, error: aErr } = await supabase
+        .from("artists")
+        .select("*, rating_staff, rare_clips")
+        .eq("slug", slug)
         .single();
 
-      if (!a) { setLoading(false); setArtist(null); return; }
-      setArtist(a as Artist);
+      if (aErr || !aRow) {
+        setLoading(false);
+        return;
+      }
+      const a = aRow as Artist;
+      setArtist(a);
 
-      // People average from artist_ratings(score)
-      {
-        const { data: avgRows } = await supabase
-          .from('artist_ratings')
-          .select('score')
-          .eq('artist_id', a.id);
+      // Releases via junction (preferred) or legacy column
+      let rels: Release[] = [];
+      const { data: ra } = await supabase
+        .from("release_artists")
+        .select("release:release_id (id,title,slug,year,cover_url), artist_id")
+        .eq("artist_id", a.id)
+        .order("position", { ascending: true });
 
-        if (avgRows?.length) {
-          const nums = avgRows.map((r: any) => Number(r.score)).filter((n: any) => Number.isFinite(n));
-          setPeopleAvg(nums.length ? Math.round(nums.reduce((s: number, n: number) => s + n, 0) / nums.length) : null);
-        } else setPeopleAvg(null);
+      if (ra && ra.length) {
+        rels = (ra as any[]).map((r) => r.release).filter(Boolean) as Release[];
+      } else {
+        const { data: legacy } = await supabase
+          .from("releases")
+          .select("id,title,slug,year,cover_url")
+          .eq("artist_id", a.id)
+          .order("year", { ascending: true, nullsFirst: false });
+        rels = (legacy || []) as Release[];
       }
 
-      // My rating (if signed in)
-      if (email) {
-        const { data: mine } = await supabase
-          .from('artist_ratings')
-          .select('id,score')
-          .eq('artist_id', a.id)
-          .limit(1);
+      // earliest → latest; nulls last
+      rels = [...rels].sort((a, b) => {
+        const ay = a.year ?? Number.POSITIVE_INFINITY;
+        const by = b.year ?? Number.POSITIVE_INFINITY;
+        if (ay !== by) return ay - by;
+        return String(a.title).localeCompare(String(b.title));
+      });
+      setAlbums(rels);
 
-        if (mine?.length) {
-          setMyRating({ id: mine[0].id, rating: mine[0].score });
-          setInputRating(String(mine[0].score));
-        } else {
-          setMyRating(null);
-          setInputRating('');
-        }
+      // Rare Clips: prefer table; fallback to JSON on artist row
+      let rcList: RareClip[] = [];
+      const { data: rc, error: rcErr } = await supabase
+        .from("rare_clips")
+        .select("id,artist_id,title,url,kind")
+        .eq("artist_id", a.id)
+        .order("id", { ascending: false });
+
+      if (!rcErr && rc && rc.length) {
+        rcList = rc as RareClip[];
+      } else if (Array.isArray(a.rare_clips) && a.rare_clips.length) {
+        rcList = a.rare_clips
+          .map((x, i) => ({
+            id: x.id ?? `json-${i}`,
+            artist_id: a.id,
+            title: (x.title ?? "").trim(),
+            url: (x.url ?? "").trim(),
+            kind: x.kind ?? null,
+          }))
+          .filter((x) => x.title || x.url);
       }
+      setClips(rcList);
 
-      // --- Discography: merge junction + legacy source ---
-      const baseSelect = 'id,title,slug,cover_url,year,rating_staff,release_ratings(rating)';
-
-      // Via junction (primary or secondary)
-      const { data: viaJunction } = await supabase
-        .from('releases')
-        .select(`${baseSelect},release_artists!inner(artist_id)`)
-        .eq('release_artists.artist_id', a.id);
-
-      // Legacy (direct artist_id)
-      const { data: viaLegacy } = await supabase
-        .from('releases')
-        .select(baseSelect)
-        .eq('artist_id', a.id);
-
-      const map = new Map<number | string, any>();
-      for (const r of (viaJunction || [])) map.set(r.id, r);
-      for (const r of (viaLegacy || []))   map.set(r.id, map.get(r.id) || r);
-
-      const combined = Array.from(map.values()).sort((x, y) => {
-        const ax = x.year ?? 9999, ay = y.year ?? 9999;
-        return ax - ay;
-      });
-
-      const withAverages = combined.map((r: any) => {
-        const arr = Array.isArray(r.release_ratings) ? r.release_ratings : [];
-        const nums = arr.map((x: any) => Number(x.rating)).filter(Number.isFinite);
-        const avg  = nums.length
-          ? Math.round(nums.reduce((sum: number, n: number) => sum + n, 0) / nums.length)
-          : null;
-        return { id: r.id, title: r.title, slug: r.slug, cover_url: r.cover_url, year: r.year, rating_staff: r.rating_staff ?? null, people_avg: avg };
-      });
-
-      setReleases(withAverages);
       setLoading(false);
     })();
   }, [slug]);
 
-  const overallScore = useMemo(() => {
-    const staff = artist?.rating_staff ?? null;
-    const ppl   = peopleAvg ?? null;
-    if (staff == null && ppl == null) return null;
-    if (staff != null && ppl == null) return Math.round(staff);
-    if (staff == null && ppl != null) return Math.round(ppl);
-    return Math.round(0.5 * Number(staff) + 0.5 * Number(ppl));
-  }, [artist?.rating_staff, peopleAvg]);
-
-  async function submitRating(e: React.FormEvent) {
-    e.preventDefault();
-    if (!artist) return;
-    const parsed = parseInt(inputRating, 10);
-    const clamped = Number.isFinite(parsed) ? Math.max(50, Math.min(100, parsed)) : NaN;
-    if (Number.isNaN(clamped)) return alert('Please enter a number from 50 to 100.');
-
-    setSaving(true);
-    try {
-      if (myRating) {
-        const { error } = await supabase
-          .from('artist_ratings')
-          .update({ score: clamped })
-          .eq('id', myRating.id);
-        if (error) throw error;
-        setMyRating({ id: myRating.id, rating: clamped });
-      } else {
+  // Load name index for linkifying
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const PAGE = 500;
+      let from = 0;
+      const map = new Map<string, string>();
+      while (true) {
         const { data, error } = await supabase
-          .from('artist_ratings')
-          .insert({ artist_id: artist.id, score: clamped })
-          .select('id,score')
-          .single();
-        if (error) throw error;
-        setMyRating({ id: data.id, rating: data.score });
+          .from("artists")
+          .select("name,slug")
+          .order("name", { ascending: true })
+          .range(from, from + PAGE - 1);
+
+        if (error) break;
+        if (!data || data.length === 0) break;
+
+        for (const r of data as NameSlug[]) {
+          const n = (r.name || "").trim();
+          const s = (r.slug || "").trim();
+          if (!n || !s) continue;
+          map.set(n.toLowerCase(), s);
+        }
+
+        if (data.length < PAGE) break;
+        from += PAGE;
       }
+      if (!alive) return;
+      setNameIndex(map);
+      setNamesLoaded(true);
+    })();
 
-      const { data: avgRows } = await supabase
-        .from('artist_ratings')
-        .select('score')
-        .eq('artist_id', artist.id);
+    return () => {
+      alive = false;
+    };
+  }, []);
 
-      if (avgRows?.length) {
-        const nums = avgRows.map((r: any) => Number(r.score)).filter(Number.isFinite);
-        setPeopleAvg(nums.length ? Math.round(nums.reduce((s: number, n: number) => s + n, 0) / nums.length) : null);
-      } else setPeopleAvg(null);
+  const sections = useMemo(() => {
+    if (!artist) return [];
+    const S: Array<{ h: string; body: string | null | undefined }> = [
+      { h: "Overview", body: artist.bio_long_intro },
+      { h: "Early life & come-up", body: artist.bio_long_early },
+      { h: "Mixtape era", body: artist.bio_long_mixtapes },
+      { h: "Albums & runs", body: artist.bio_long_albums },
+      { h: "Business & label", body: artist.bio_long_business },
+      { h: "Legacy & influence", body: artist.bio_long_legacy },
+    ];
+    return S.filter((s) => (s.body ?? "").trim().length > 0);
+  }, [artist]);
 
-      alert('Saved your rating.');
-    } catch (err: any) {
-      alert(err.message || 'Could not save rating.');
-    } finally {
-      setSaving(false);
-    }
-  }
+  const badges = useMemo(() => {
+    if (!artist) return [];
+    const arr: Array<{ label: string; title: string }> = [];
+    const grammys = artist.grammys ?? 0;
+    const plat = artist.platinum ?? 0;
+    const hot100 = artist.billboard_hot100_entries ?? 0;
 
-  async function removeMyRating() {
-    if (!artist || !myRating) return;
-    if (!confirm('Remove your rating?')) return;
-    setSaving(true);
-    try {
-      const { error } = await supabase
-        .from('artist_ratings')
-        .delete()
-        .eq('id', myRating.id);
-      if (error) throw error;
+    if (grammys > 0) arr.push({ label: `🏆 ${grammys} Grammy${grammys === 1 ? "" : "s"}`, title: "Grammy Awards" });
+    if (plat > 0) arr.push({ label: `💿 ${plat}× Platinum`, title: "RIAA Platinum awards (albums sold by millions)" });
+    if (hot100 > 0) arr.push({ label: `📈 ${hot100} Hot 100`, title: "Billboard Hot 100 entries" });
 
-      setMyRating(null);
-      setInputRating('');
+    return arr;
+  }, [artist]);
 
-      const { data: avgRows } = await supabase
-        .from('artist_ratings')
-        .select('score')
-        .eq('artist_id', artist.id);
+  if (loading) return <main className="mx-auto max-w-4xl px-4 py-8">Loading…</main>;
+  if (!artist) return <main className="mx-auto max-w-4xl px-4 py-8">Artist not found.</main>;
 
-      if (avgRows?.length) {
-        const nums = avgRows.map((r: any) => Number(r.score)).filter(Number.isFinite);
-        setPeopleAvg(nums.length ? Math.round(nums.reduce((s: number, n: number) => s + n, 0) / nums.length) : null);
-      } else setPeopleAvg(null);
-    } catch (err: any) {
-      alert(err.message || 'Could not remove rating.');
-    } finally {
-      setSaving(false);
-    }
-  }
+  // We still compute these but we no longer show the tagline line under the name
+  const desc = artist.seo_description || artist.bio || `Profile and discography for ${artist.name}.`;
 
-  if (loading) return <main className="mx-auto max-w-6xl px-4 py-8">Loading…</main>;
-  if (!artist) notFound();
+  const renderLinkedPara = (t: string, i: number) => (
+    <p key={i} className="opacity-90 leading-relaxed">
+      {namesLoaded ? linkifyText(t, nameIndex, artist.slug) : t}
+    </p>
+  );
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      {/* JSON-LD */}
-      <SeoJsonLd
-        json={{
-          '@context': 'https://schema.org',
-          '@type': 'MusicGroup',
-          name: artist.name,
-          url: absUrl(`/artist/${artist.slug}`),
-          image: artist.card_img_url ? absUrl(artist.card_img_url) : undefined,
-          aggregateRating:
-            overallScore != null
-              ? { '@type': 'AggregateRating', ratingValue: overallScore, ratingCount: 1 }
-              : undefined,
-        }}
-      />
-
+    <main className="mx-auto max-w-5xl px-4 py-8">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start gap-5">
+      <header className="flex items-start gap-4">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={artist!.card_img_url || '/placeholder/nas-card.jpg'}
-          alt={artist!.name}
-          className="h-36 w-36 rounded-xl object-cover border border-zinc-800"
+          src={artist.card_img_url || "/placeholder/nas-card.jpg"}
+          alt={artist.name}
+          className="h-28 w-28 rounded-xl object-cover border border-zinc-800"
         />
-        <div className="flex-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-extrabold">{artist!.name}</h1>
-            {artist!.staff_rank && (
-              <span className="text-xs px-2 py-1 rounded bg-orange-500/15 border border-orange-500/30 text-orange-300">
-                Rank #{artist!.staff_rank}
-              </span>
-            )}
-          </div>
-          <div className="mt-2 text-sm opacity-80">
-            {artist!.origin && <span>{artist!.origin}</span>}
-            {artist!.origin && artist!.years_active && <span> • </span>}
-            {artist!.years_active && <span>{artist!.years_active}</span>}
-          </div>
-          {artist!.bio && <p className="mt-3 opacity-90 max-w-2xl">{artist!.bio}</p>}
-          <div className="mt-4 flex flex-wrap gap-3 text-sm">
-            <Chip label="Hot 100 entries" value={artist!.billboard_hot100_entries} />
-            <Chip label="Platinum awards" value={artist!.platinum} />
-            <Chip label="Grammys" value={artist!.grammys} />
-          </div>
-          {overallScore != null && (
-            <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 px-2 py-1">
-              <span className="opacity-70">Overall</span>
-              <strong className="tabular-nums">{overallScore}</strong>
-            </div>
-          )}
-          {sessionEmail ? (
-            <form onSubmit={submitRating} className="mt-4 flex items-center gap-2">
-              <input
-                type="number"
-                inputMode="numeric"
-                className="input w-28"
-                placeholder="Rate 50–100"
-                value={inputRating}
-                onChange={(e) => setInputRating(e.target.value)}
-              />
-              <button className="btn" disabled={saving} type="submit">
-                {myRating ? 'Update' : 'Submit'}
-              </button>
-              {myRating && (
-                <button
-                  type="button"
-                  onClick={removeMyRating}
-                  className="text-xs px-3 py-2 rounded border border-zinc-700 hover:bg-zinc-900"
-                  disabled={saving}
-                >
-                  Remove
-                </button>
-              )}
-            </form>
-          ) : (
-            <div className="mt-3 text-xs opacity-75">
-              <a href="/login" className="underline">Sign in</a> to rate this artist.
-            </div>
-          )}
-        </div>
-      </div>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-3xl font-extrabold tracking-tight">{artist.name}</h1>
 
-      {/* Discography */}
-      <section className="mt-8">
-        <h2 className="text-xl font-bold mb-3">Discography</h2>
-        {releases.length === 0 ? (
-          <p className="opacity-70 text-sm">No releases added yet.</p>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-            {releases.map((r) => (
-              <Link
-                key={String(r.id)}
-                href={`/release/${r.slug}`}
-                className="group block rounded-lg overflow-hidden border border-zinc-800 hover:border-zinc-600"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={r.cover_url || '/placeholder/cover1.jpg'}
-                  alt={r.title}
-                  className="w-full aspect-square object-cover"
-                />
-                <div className="p-2">
-                  <div className="font-semibold leading-tight group-hover:underline truncate">{r.title}</div>
-                  <div className="text-xs opacity-70">{r.year ?? '—'}</div>
-                  <div className="mt-2 flex items-center gap-2 text-xs">
-                    {r.rating_staff != null && (
-                      <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
-                        <span role="img" aria-label="mic">🎙️</span>
-                        <strong className="tabular-nums">{r.rating_staff}</strong>
-                      </span>
-                    )}
-                    {r.people_avg != null && (
-                      <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
-                        <span role="img" aria-label="fire">🔥</span>
-                        <strong className="tabular-nums">{r.people_avg}</strong>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </Link>
+          {/* Removed the tagline line below the name */}
+          {/* <p className="opacity-75 text-sm mt-1">{linkifyText(desc, nameIndex, artist.slug)}</p> */}
+
+          {/* quick facts & badges */}
+          <div className="mt-2 text-xs opacity-70 flex flex-wrap gap-4">
+            {artist.origin && <span>From: {artist.origin}</span>}
+            {artist.years_active && <span>Years active: {artist.years_active}</span>}
+          </div>
+
+          {badges.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {badges.map((b, i) => (
+                <span
+                  key={i}
+                  title={b.title}
+                  className="text-[11px] px-2 py-1 rounded-full border border-zinc-800 bg-zinc-950/50"
+                >
+                  {b.label}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Member rating + OVERALL ONLY chip */}
+          <div className="mt-3">
+            <Rating kind="artist" itemId={artist.id} summaryMode="overall-only" />
+          </div>
+        </div>
+      </header>
+
+      {/* Short bio */}
+      {artist.bio && (
+        <section className="mt-6">
+          {renderLinkedPara(artist.bio, 0)}
+        </section>
+      )}
+
+      {/* Long-form sections with dividers between each section */}
+      {sections.length > 0 && (
+        <section className="mt-10">
+          <h2 className="text-xl font-bold mb-3">Biography</h2>
+          <div className="divide-y divide-zinc-800">
+            {sections.map((s, i) => (
+              <article key={i} className="py-5 first:pt-0">
+                <h3 className="text-lg font-semibold mb-2">{s.h}</h3>
+                {(s.body || "")
+                  .split(/\n{2,}/)
+                  .map((para, j) => (
+                    <div key={j} className={j > 0 ? "mt-2" : undefined}>
+                      {renderLinkedPara(para, j)}
+                    </div>
+                  ))}
+              </article>
             ))}
           </div>
+        </section>
+      )}
+
+      {/* Discography (earliest → latest) */}
+      <section className="mt-10">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold">Albums</h2>
+          <Link href="/releases" className="text-sm underline opacity-80 hover:opacity-100">
+            Browse all releases →
+          </Link>
+        </div>
+        {albums.length === 0 ? (
+          <p className="mt-2 opacity-70 text-sm">No albums found.</p>
+        ) : (
+          <ul className="mt-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            {albums.map((r) => (
+              <li key={String(r.id)} className="rounded-xl border border-zinc-800 overflow-hidden bg-zinc-950/40">
+                <Link href={`/release/${r.slug}`} className="block">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={r.cover_url || "/placeholder/cover1.jpg"} alt={r.title} className="w-full aspect-square object-cover" />
+                  <div className="p-2">
+                    <div className="font-semibold truncate">{r.title}</div>
+                    <div className="text-xs opacity-70">{r.year ?? "—"}</div>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 
-      <style jsx>{`
-        .input { background:#0a0a0a; border:1px solid #27272a; border-radius:0.5rem; padding:0.5rem 0.75rem; color:#f4f4f5; outline:none; }
-        .input::placeholder { color:#a1a1aa; }
-        .input:focus { box-shadow:0 0 0 2px rgba(249,115,22,0.35); }
-        .btn { background:#f97316; color:#000; font-weight:700; border-radius:0.5rem; padding:0.55rem 0.9rem; }
-      `}</style>
-    </main>
-  );
-}
+      {/* Rare clips */}
+      {clips.length > 0 && (
+        <section className="mt-10">
+          <h2 className="text-xl font-bold mb-3">Rare Clips</h2>
+          <ul className="space-y-2">
+            {clips.map((c, i) => {
+              const href = (c.url || "").trim();
+              const title = (c.title || href || "Clip").trim();
+              if (!href) return null;
+              return (
+                <li key={String(c.id ?? i)} className="text-sm">
+                  <a href={href} target="_blank" rel="noreferrer" className="underline opacity-90 hover:opacity-100">
+                    {title}
+                  </a>
+                  {c.kind && <span className="ml-2 opacity-60 text-xs">({c.kind})</span>}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
-function Chip({ label, value }: { label: string; value: number | null }) {
-  if (value == null) return null;
-  return (
-    <span className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 px-2 py-1">
-      <span className="opacity-70">{label}</span>
-      <strong className="tabular-nums">{value}</strong>
-    </span>
+      {/* Sources */}
+      {artist.bio_sources && (
+        <section className="mt-10">
+          <h2 className="text-lg font-semibold mb-2">Sources</h2>
+          <ul className="list-disc list-inside text-sm opacity-80 space-y-1">
+            {artist.bio_sources.split("\n").map((line, i) => {
+              const t = line.trim();
+              if (!t) return null;
+              return (
+                <li key={i}>
+                  <a href={t} target="_blank" rel="noreferrer" className="underline">{t}</a>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+    </main>
   );
 }

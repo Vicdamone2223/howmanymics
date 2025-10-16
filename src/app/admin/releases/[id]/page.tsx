@@ -1,3 +1,4 @@
+// src/app/admin/releases/[id]/page.tsx
 'use client';
 
 import { useEffect, useMemo, useState, type ComponentType } from 'react';
@@ -27,6 +28,11 @@ type ReleaseRow = {
   tracks_disc1: string[] | null;
   tracks_disc2: string[] | null;
   rating_staff: number | null;
+
+  // NEW: SEO + Album Info
+  seo_title: string | null;
+  seo_description: string | null;
+  album_info: string | null;
 };
 
 function slugify(s: string) {
@@ -68,6 +74,11 @@ export default function EditReleasePage() {
   const [tracks1, setTracks1] = useState<string[]>(['']);
   const [tracks2, setTracks2] = useState<string[]>(['']);
   const [ratingStaff, setRatingStaff] = useState<string>(''); // free-type 50–100
+
+  // NEW: SEO + Album Info
+  const [seoTitle, setSeoTitle] = useState('');
+  const [seoDesc, setSeoDesc] = useState('');
+  const [albumInfo, setAlbumInfo] = useState('');
 
   // multi-artist
   const [albumArtists, setAlbumArtists] = useState<ArtistRow[]>([]);
@@ -119,7 +130,7 @@ export default function EditReleasePage() {
       }
       setArtists(fetchedArtists);
 
-      // load release by id or slug
+      // load release by numeric id OR slug using the same [id] param
       const nId = Number(id);
       let rel: ReleaseRow | null = null;
 
@@ -131,13 +142,14 @@ export default function EditReleasePage() {
         const { data, error } = await supabase.from('releases').select('*').eq('slug', id).single();
         if (!error && data) rel = data as ReleaseRow;
       }
+
       if (!rel) {
         setErr('Release not found.');
         setLoading(false);
         return;
       }
 
-      // hydrate
+      // hydrate basics
       setRelId(rel.id);
       setTitle(rel.title || '');
       setSlug(rel.slug || '');
@@ -152,7 +164,12 @@ export default function EditReleasePage() {
       setTracks2((rel.tracks_disc2 && rel.tracks_disc2.length ? rel.tracks_disc2 : ['']).slice());
       setRatingStaff(rel.rating_staff != null ? String(rel.rating_staff) : '');
 
-      // release artists
+      // hydrate NEW: SEO + album info
+      setSeoTitle(rel.seo_title || '');
+      setSeoDesc(rel.seo_description || '');
+      setAlbumInfo(rel.album_info || '');
+
+      // release artists (junction)
       const { data: ra } = await supabase
         .from('release_artists')
         .select('artist_id,position,is_primary')
@@ -203,8 +220,8 @@ export default function EditReleasePage() {
 
   const matches = useMemo(() => {
     const q = artistQuery.trim().toLowerCase();
-    if (!q) return [];
     const taken = new Set(albumArtists.map((a) => String(a.id)));
+    if (!q) return [];
     return artists
       .filter(
         (a) =>
@@ -250,7 +267,7 @@ export default function EditReleasePage() {
       const staffNum =
         ratingStaff.trim() === '' ? null : Math.max(50, Math.min(100, parseInt(ratingStaff, 10) || 0));
 
-      // base update
+      // base update (includes NEW seo_title, seo_description, album_info)
       const payload: Partial<ReleaseRow> = {
         title: title.trim(),
         slug: slugify(slug || title),
@@ -265,6 +282,10 @@ export default function EditReleasePage() {
         tracks_disc2: isDouble ? tracks2.map((t) => t.trim()).filter(Boolean) : null,
         artist_id: primaryId != null ? Number(primaryId) : undefined, // keep legacy column in sync
         rating_staff: staffNum,
+
+        seo_title: seoTitle.trim() || null,
+        seo_description: seoDesc.trim() || null,
+        album_info: albumInfo.trim() || null,
       };
 
       const { error: upErr } = await supabase.from('releases').update(payload).eq('id', relId);
@@ -354,7 +375,6 @@ export default function EditReleasePage() {
     }
   }
 
-  // UI
   if (ok === null) return <main className="mx-auto max-w-4xl px-4 py-8">Checking access…</main>;
   if (ok === false) {
     return (
@@ -384,6 +404,28 @@ export default function EditReleasePage() {
       <form onSubmit={saveRelease} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <input className="input" placeholder="Title" value={title} onChange={(e)=>setTitle(e.target.value)} required />
         <input className="input" placeholder="Slug (e.g., illmatic)" value={slug} onChange={(e)=>setSlug(e.target.value)} />
+
+        {/* SEO */}
+        <input
+          className="input sm:col-span-2"
+          placeholder="SEO Title (optional)"
+          value={seoTitle}
+          onChange={(e)=>setSeoTitle(e.target.value)}
+        />
+        <input
+          className="input sm:col-span-2"
+          placeholder="SEO Description (optional)"
+          value={seoDesc}
+          onChange={(e)=>setSeoDesc(e.target.value)}
+        />
+
+        {/* Album Info (free text/markdown shown on release page) */}
+        <textarea
+          className="input sm:col-span-2"
+          placeholder="Album Info (Markdown or plain text)"
+          value={albumInfo}
+          onChange={(e)=>setAlbumInfo(e.target.value)}
+        />
 
         {/* Artists on this album */}
         <div className="sm:col-span-2 rounded-lg border border-zinc-800 p-3">
@@ -487,7 +529,7 @@ export default function EditReleasePage() {
 
         {/* Similar albums */}
         <div className="sm:col-span-2 rounded-lg border border-zinc-800 p-3">
-          {/* We intentionally relax typing for this multi-select usage */}
+          {/* loosened typing at top */}
           <ReleasePickerAny value={similar} onChange={setSimilar} max={6} label="Similar albums" />
         </div>
 

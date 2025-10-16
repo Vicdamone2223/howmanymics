@@ -16,14 +16,17 @@ type Row = {
   author: string | null;
   published_at: string | null;
   featured_slider: boolean;
+  // optional SEO fields if you’ve added them later:
+  // seo_description?: string | null;
 };
 
-type DbArticle = Row & { id: number }; // ensured id is present when loading from DB
+type DbArticle = Row & { id: number };
 
 function slugify(s: string) {
   return (s || '')
     .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
+    .normalize('NFKD')
+    .replace(/[^\p{Letter}\p{Number}\s-]/gu, '')
     .trim()
     .replace(/\s+/g, '-');
 }
@@ -49,10 +52,21 @@ export default function EditArticlePage() {
     featured_slider: false,
   });
 
+  const [uploading, setUploading] = useState(false);
+
   useEffect(() => {
     (async () => {
-      const { data: meAdmin } = await supabase.rpc('me_is_admin');
-      if (!meAdmin) { setOk(false); setLoading(false); return; }
+      const { data: meAdmin, error } = await supabase.rpc('me_is_admin');
+      if (error) {
+        setOk(false);
+        setLoading(false);
+        return;
+      }
+      if (!meAdmin) {
+        setOk(false);
+        setLoading(false);
+        return;
+      }
       setOk(true);
 
       if (!isNew) {
@@ -66,7 +80,11 @@ export default function EditArticlePage() {
             .single<DbArticle>();
           r = data ?? null;
         }
-        if (!r) { setErr('Article not found'); setLoading(false); return; }
+        if (!r) {
+          setErr('Article not found');
+          setLoading(false);
+          return;
+        }
         setRow({
           id: r.id,
           kind: r.kind,
@@ -80,14 +98,23 @@ export default function EditArticlePage() {
           featured_slider: !!r.featured_slider,
         });
       }
+
       setLoading(false);
     })();
   }, [id, isNew]);
 
+  // Auto-fill slug if blank
+  useEffect(() => {
+    if (!row.title) return;
+    setRow((r) => (r.slug ? r : { ...r, slug: slugify(row.title) }));
+  }, [row.title]);
+
   const canSave = useMemo(() => row.title.trim().length > 0, [row.title]);
 
   async function save(e: React.FormEvent) {
-    e.preventDefault(); setErr(null);
+    e.preventDefault();
+    setErr(null);
+
     const payload = {
       ...row,
       slug: slugify(row.slug || row.title),
@@ -99,22 +126,48 @@ export default function EditArticlePage() {
     };
 
     if (isNew) {
-      const { data, error } = await supabase.from('articles').insert(payload).select('id').single<{ id: number }>();
-      if (error) { setErr(error.message); return; }
-      alert('Article created'); router.push(`/admin/articles/${data!.id}`);
+      const { data, error } = await supabase
+        .from('articles')
+        .insert(payload)
+        .select('id')
+        .single<{ id: number }>();
+      if (error) {
+        setErr(error.message);
+        return;
+      }
+      alert('Article created');
+      router.push(`/admin/articles/${data!.id}`);
     } else {
       const { error } = await supabase.from('articles').update(payload).eq('id', row.id!);
-      if (error) { setErr(error.message); return; }
+      if (error) {
+        setErr(error.message);
+        return;
+      }
       alert('Saved');
     }
   }
 
-  async function destroy() {
-    if (isNew || !row.id) return;
-    if (!confirm('Delete this article?')) return;
-    const { error } = await supabase.from('articles').delete().eq('id', row.id);
-    if (error) { alert(error.message); return; }
-    router.push('/admin/articles');
+  async function handleCoverUpload(file: File) {
+    try {
+      setUploading(true);
+      const baseSlug = slugify(row.slug || row.title || 'article');
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+      const path = `articles/${baseSlug}-${Date.now()}.${ext}`;
+
+      const { error: upErr } = await supabase.storage
+        .from('assets')
+        .upload(path, file, { upsert: false, cacheControl: '3600' });
+      if (upErr) throw upErr;
+
+      const { data: pub } = supabase.storage.from('assets').getPublicUrl(path);
+      const publicUrl = pub?.publicUrl || '';
+
+      setRow((r) => ({ ...r, cover_url: publicUrl }));
+    } catch (e: any) {
+      alert(e?.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
   }
 
   if (ok === null) return <main className="mx-auto max-w-4xl px-4 py-8">Checking…</main>;
@@ -124,15 +177,33 @@ export default function EditArticlePage() {
   return (
     <main className="mx-auto max-w-4xl px-4 py-8">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-extrabold">{isNew ? 'New' : 'Edit'} {row.kind === 'review' ? 'Review' : 'Article'}</h1>
+        <h1 className="text-2xl font-extrabold">
+          {isNew ? 'New' : 'Edit'} {row.kind === 'review' ? 'Review' : 'Article'}
+        </h1>
         {!isNew && (
-          <button onClick={destroy} className="text-sm px-2 py-1 rounded border border-red-700 text-red-300 hover:bg-red-900/20">
+          <button
+            onClick={async () => {
+              if (isNew || !row.id) return;
+              if (!confirm('Delete this article?')) return;
+              const { error } = await supabase.from('articles').delete().eq('id', row.id);
+              if (error) {
+                alert(error.message);
+                return;
+              }
+              router.push('/admin/articles');
+            }}
+            className="text-sm px-2 py-1 rounded border border-red-700 text-red-300 hover:bg-red-900/20"
+          >
             Delete
           </button>
         )}
       </div>
 
-      {err && <div className="mb-4 text-sm rounded-lg border border-red-800 bg-red-950/40 p-3 text-red-300">{err}</div>}
+      {err && (
+        <div className="mb-4 text-sm rounded-lg border border-red-800 bg-red-950/40 p-3 text-red-300">
+          {err}
+        </div>
+      )}
 
       <form onSubmit={save} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <select
@@ -153,18 +224,72 @@ export default function EditArticlePage() {
           Feature in homepage slider
         </label>
 
-        <input className="input" placeholder="Title" value={row.title} onChange={(e) => setRow((r) => ({ ...r, title: e.target.value }))} required />
-        <input className="input" placeholder="Slug" value={row.slug} onChange={(e) => setRow((r) => ({ ...r, slug: e.target.value }))} />
+        <input
+          className="input"
+          placeholder="Title"
+          value={row.title}
+          onChange={(e) => setRow((r) => ({ ...r, title: e.target.value }))}
+          required
+        />
+        <input
+          className="input"
+          placeholder="Slug"
+          value={row.slug}
+          onChange={(e) => setRow((r) => ({ ...r, slug: e.target.value }))}
+        />
 
-        <input className="input sm:col-span-2" placeholder="Cover URL" value={row.cover_url ?? ''} onChange={(e) => setRow((r) => ({ ...r, cover_url: e.target.value }))} />
-        <input className="input sm:col-span-2" placeholder="Author" value={row.author ?? ''} onChange={(e) => setRow((r) => ({ ...r, author: e.target.value }))} />
+        {/* Cover upload + URL field */}
+        <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-start">
+          <input
+            className="input"
+            placeholder="Cover image URL"
+            value={row.cover_url ?? ''}
+            onChange={(e) => setRow((r) => ({ ...r, cover_url: e.target.value }))}
+          />
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={uploading}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleCoverUpload(f);
+              }}
+            />
+            <span className="btn">{uploading ? 'Uploading…' : 'Upload cover'}</span>
+          </label>
+        </div>
+
+        {row.cover_url ? (
+          <div className="sm:col-span-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={row.cover_url}
+              alt="Cover preview"
+              className="h-36 rounded-lg object-cover border border-zinc-800"
+            />
+          </div>
+        ) : null}
+
+        <input
+          className="input sm:col-span-2"
+          placeholder="Author"
+          value={row.author ?? ''}
+          onChange={(e) => setRow((r) => ({ ...r, author: e.target.value }))}
+        />
         <input
           className="input"
           type="datetime-local"
           value={row.published_at ? new Date(row.published_at).toISOString().slice(0, 16) : ''}
           onChange={(e) => setRow((r) => ({ ...r, published_at: e.target.value }))}
         />
-        <input className="input" placeholder="Excerpt" value={row.excerpt ?? ''} onChange={(e) => setRow((r) => ({ ...r, excerpt: e.target.value }))} />
+        <input
+          className="input"
+          placeholder="Excerpt"
+          value={row.excerpt ?? ''}
+          onChange={(e) => setRow((r) => ({ ...r, excerpt: e.target.value }))}
+        />
 
         <textarea
           className="input sm:col-span-2 min-h-64"
@@ -174,14 +299,31 @@ export default function EditArticlePage() {
         />
 
         <div className="sm:col-span-2 mt-2">
-          <button className="btn" type="submit" disabled={!canSave}>Save</button>
-          <Link href="/admin/articles" className="ml-2 text-sm opacity-80 hover:opacity-100 underline">Back</Link>
+          <button className="btn" type="submit" disabled={!canSave}>
+            Save
+          </button>
+          <Link href="/admin/articles" className="ml-2 text-sm opacity-80 hover:opacity-100 underline">
+            Back
+          </Link>
         </div>
       </form>
 
       <style jsx>{`
-        .input { background:#0a0a0a; border:1px solid #27272a; border-radius:0.5rem; padding:0.5rem 0.75rem; color:#f4f4f5; outline:none; }
-        .btn { background:#f97316; color:#000; font-weight:700; border-radius:0.5rem; padding:0.6rem 0.9rem; }
+        .input {
+          background: #0a0a0a;
+          border: 1px solid #27272a;
+          border-radius: 0.5rem;
+          padding: 0.5rem 0.75rem;
+          color: #f4f4f5;
+          outline: none;
+        }
+        .btn {
+          background: #f97316;
+          color: #000;
+          font-weight: 700;
+          border-radius: 0.5rem;
+          padding: 0.6rem 0.9rem;
+        }
       `}</style>
     </main>
   );

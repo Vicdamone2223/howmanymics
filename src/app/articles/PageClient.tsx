@@ -1,3 +1,4 @@
+// src/app/articles/PageClient.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -21,23 +22,28 @@ export default function PageClient() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let alive = true;
     (async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('articles')
-        .select('id,title,slug,cover_url,excerpt,published_at,kind,release_id,is_published')
+        .select(
+          'id,title,slug,cover_url,excerpt,published_at,kind,release_id,is_published'
+        )
         .eq('is_published', true)
         .order('published_at', { ascending: false });
 
-      if (!alive) return;
-      const all = (data || []) as Row[];
-      const onlyReviews = all.filter(
-        r => r.kind === 'review' || (r.release_id != null)
-      );
-      setRows(onlyReviews);
+      if (error) {
+        console.error('articles index fetch error:', error);
+        setRows([]);
+      } else {
+        // Show non-review pieces here (reviews live on /reviews)
+        const all = (data || []) as Row[];
+        const onlyArticles = all.filter(
+          r => r.kind === 'article' || r.release_id == null
+        );
+        setRows(onlyArticles);
+      }
       setLoading(false);
     })();
-    return () => { alive = false; };
   }, []);
 
   if (loading) {
@@ -46,9 +52,9 @@ export default function PageClient() {
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
-      <h1 className="text-2xl font-extrabold mb-4">Reviews</h1>
+      <h1 className="text-2xl font-extrabold mb-4">Articles</h1>
       {rows.length === 0 ? (
-        <div className="opacity-70 text-sm">No reviews yet.</div>
+        <div className="opacity-70 text-sm">No articles yet.</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {rows.map(r => (
@@ -64,13 +70,19 @@ export default function PageClient() {
                 className="w-full h-44 object-cover"
               />
               <div className="p-3">
-                <div className="font-semibold leading-tight group-hover:underline">{r.title}</div>
+                <div className="font-semibold leading-tight group-hover:underline">
+                  {r.title}
+                </div>
                 {r.published_at && (
                   <div className="text-xs opacity-70 mt-1">
                     {new Date(r.published_at).toLocaleDateString()}
                   </div>
                 )}
-                {r.excerpt && <p className="text-sm opacity-80 line-clamp-2 mt-1">{r.excerpt}</p>}
+                {r.excerpt && (
+                  <p className="text-sm opacity-80 line-clamp-2 mt-1">
+                    {r.excerpt}
+                  </p>
+                )}
               </div>
             </Link>
           ))}

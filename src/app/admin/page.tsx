@@ -1,4 +1,3 @@
-// src/app/admin/page.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -76,10 +75,7 @@ function ArtistPicker({
 
   const shown = useMemo(() => {
     const term = q.trim();
-    if (!term) {
-      // Increase the cap so you can scroll beyond “M”
-      return all.slice(0, 2000);
-    }
+    if (!term) return all.slice(0, 2000);
     const tSlug = slugify(term);
     const tLower = term.toLowerCase();
     const res = all.filter((a) => {
@@ -122,6 +118,8 @@ function ArtistPicker({
   );
 }
 
+type RareClip = { title: string; url: string };
+
 export default function AdminPage() {
   const [ok, setOk] = useState<boolean | null>(null);
 
@@ -137,6 +135,19 @@ export default function AdminPage() {
   const [aGrammys, setAGrammys] = useState<number | ''>('');
   const [aStaffRank, setAStaffRank] = useState<number | ''>('');
   const [aStaffScore, setAStaffScore] = useState<string>('');
+  // Artist SEO
+  const [aSeoTitle, setASeoTitle] = useState('');
+  const [aSeoDesc, setASeoDesc] = useState('');
+  // Long-form bio sections
+  const [aBioIntro, setABioIntro] = useState('');
+  const [aBioEarly, setABioEarly] = useState('');
+  const [aBioMixtapes, setABioMixtapes] = useState('');
+  const [aBioAlbums, setABioAlbums] = useState('');
+  const [aBioBusiness, setABioBusiness] = useState('');
+  const [aBioLegacy, setABioLegacy] = useState('');
+  const [aBioSources, setABioSources] = useState('');
+  // Rare Clips (dynamic)
+  const [rareClips, setRareClips] = useState<RareClip[]>([{ title: '', url: '' }]);
   const [uploading, setUploading] = useState(false);
 
   // Release form state
@@ -152,6 +163,11 @@ export default function AdminPage() {
   const [rDouble, setRDouble] = useState(false);
   const [tracks1, setTracks1] = useState<string[]>(['']);
   const [tracks2, setTracks2] = useState<string[]>(['']);
+  // Release SEO
+  const [rSeoTitle, setRSeoTitle] = useState('');
+  const [rSeoDesc, setRSeoDesc] = useState('');
+  // Similar albums (comma-separated slugs)
+  const [rSimilar, setRSimilar] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -219,6 +235,17 @@ export default function AdminPage() {
   const setTrack2At = (i: number, v: string) =>
     setTracks2((prev) => prev.map((t, idx) => (idx === i ? v : t)));
 
+  // ----- rare clips helpers -----
+  function addRareClip() {
+    setRareClips((prev) => [...prev, { title: '', url: '' }]);
+  }
+  function removeRareClip(i: number) {
+    setRareClips((prev) => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
+  }
+  function setRareClipAt(i: number, part: Partial<RareClip>) {
+    setRareClips((prev) => prev.map((rc, idx) => (idx === i ? { ...rc, ...part } : rc)));
+  }
+
   async function addArtist(e: React.FormEvent) {
     e.preventDefault();
 
@@ -238,6 +265,21 @@ export default function AdminPage() {
       grammys: toIntOrNull(aGrammys),
       staff_rank: toIntOrNull(aStaffRank),
       rating_staff: staffScore,
+      // SEO
+      seo_title: aSeoTitle.trim() || null,
+      seo_description: aSeoDesc.trim() || null,
+      // long form
+      bio_long_intro: aBioIntro.trim() || null,
+      bio_long_early: aBioEarly.trim() || null,
+      bio_long_mixtapes: aBioMixtapes.trim() || null,
+      bio_long_albums: aBioAlbums.trim() || null,
+      bio_long_business: aBioBusiness.trim() || null,
+      bio_long_legacy: aBioLegacy.trim() || null,
+      bio_sources: aBioSources.trim() || null,
+      // rare clips
+      rare_clips: rareClips
+        .map((rc) => ({ title: rc.title.trim(), url: rc.url.trim() }))
+        .filter((rc) => rc.title || rc.url),
     };
 
     const { error } = await supabase.from('artists').insert(payload);
@@ -245,17 +287,13 @@ export default function AdminPage() {
 
     alert('Artist added');
 
-    setAName('');
-    setASlug('');
-    setAImg('');
-    setAOrigin('');
-    setAYears('');
-    setABio('');
-    setAHot100('');
-    setAPlatinum('');
-    setAGrammys('');
-    setAStaffRank('');
-    setAStaffScore('');
+    // reset (core + new fields)
+    setAName(''); setASlug(''); setAImg(''); setAOrigin(''); setAYears(''); setABio('');
+    setAHot100(''); setAPlatinum(''); setAGrammys(''); setAStaffRank('');
+    setAStaffScore(''); setASeoTitle(''); setASeoDesc('');
+    setABioIntro(''); setABioEarly(''); setABioMixtapes(''); setABioAlbums('');
+    setABioBusiness(''); setABioLegacy(''); setABioSources('');
+    setRareClips([{ title: '', url: '' }]);
   }
 
   async function addRelease(e: React.FormEvent) {
@@ -275,6 +313,8 @@ export default function AdminPage() {
       tracks_disc2: rDouble ? (disc2.length ? disc2 : []) : null,
     };
 
+    const similar_release_slugs = toArray(rSimilar);
+
     const base = {
       title: rTitle.trim(),
       slug: finalSlug,
@@ -286,6 +326,11 @@ export default function AdminPage() {
       youtube_id: rYouTube.trim() || null,
       is_double_album: rDouble,
       riaa_cert: rRIAA.trim() || null,
+      // SEO
+      seo_title: rSeoTitle.trim() || null,
+      seo_description: rSeoDesc.trim() || null,
+      // Similar albums (slugs)
+      similar_release_slugs,
       ...tracksPayload,
     };
 
@@ -298,18 +343,9 @@ export default function AdminPage() {
     alert('Release added');
 
     // reset
-    setRTitle('');
-    setRSlug('');
-    setRArtistId('');
-    setRYear('');
-    setRCover('');
-    setRProducers('');
-    setRLabels('');
-    setRYouTube('');
-    setRRIAA('');
-    setRDouble(false);
-    setTracks1(['']);
-    setTracks2(['']);
+    setRTitle(''); setRSlug(''); setRArtistId(''); setRYear(''); setRCover('');
+    setRProducers(''); setRLabels(''); setRYouTube(''); setRRIAA(''); setRDouble(false);
+    setTracks1(['']); setTracks2(['']); setRSeoTitle(''); setRSeoDesc(''); setRSimilar('');
   }
 
   return (
@@ -323,14 +359,18 @@ export default function AdminPage() {
           <a href="/admin/releases" className="opacity-80 hover:opacity-100 underline">
             Manage Albums →
           </a>
-          <a href="/admin/calendar" className="opacity-80 hover:opacity-100 underline">
-            Manage Calendar →
+          <a href="/admin/producers" className="opacity-80 hover:opacity-100 underline">
+            Manage Producers →
           </a>
           <a href="/admin/articles" className="opacity-80 hover:opacity-100 underline">
             Articles Admin →
           </a>
-          <a href="/admin/reviews" className="opacity-80 hover:opacity-100 underline">
+          {/* 🔁 changed to /admin/articles so it won’t 404 */}
+          <a href="/admin/articles" className="opacity-80 hover:opacity-100 underline">
             Reviews Admin →
+          </a>
+          <a href="/admin/calendar" className="opacity-80 hover:opacity-100 underline">
+            Manage Calendar →
           </a>
           <a href="/admin/today" className="opacity-80 hover:opacity-100 underline">
             Manage Today in Hip-Hop →
@@ -338,13 +378,14 @@ export default function AdminPage() {
           <a href="/admin/debates" className="opacity-80 hover:opacity-100 underline">
             Manage Debates →
           </a>
-          {/* NEW: Verse of the Month */}
           <a href="/admin/verse" className="opacity-80 hover:opacity-100 underline">
             Verse of the Month →
           </a>
         </nav>
       </div>
-      <p className="text-sm opacity-80 mb-6">Add artists and releases. Only your account can write.</p>
+      <p className="text-sm opacity-80 mb-6">
+        Add artists and releases. Only your account can write.
+      </p>
 
       {/* Add Artist */}
       <section className="mb-8 rounded-xl border border-zinc-800 p-4">
@@ -379,49 +420,55 @@ export default function AdminPage() {
 
           <input className="input" placeholder="Origin (e.g., Queensbridge, NY)" value={aOrigin} onChange={(e) => setAOrigin(e.target.value)} />
           <input className="input" placeholder="Years active (e.g., 1991–present)" value={aYears} onChange={(e) => setAYears(e.target.value)} />
-          <textarea className="input sm:col-span-2" placeholder="Short bio" value={aBio} onChange={(e) => setABio(e.target.value)} />
+          <textarea className="input sm:col-span-2" placeholder="Short teaser bio (2–3 sentences)" value={aBio} onChange={(e) => setABio(e.target.value)} />
 
           {/* Achievements */}
-          <input
-            type="number"
-            className="input"
-            placeholder="Billboard Hot 100 entries"
-            value={aHot100}
-            onChange={(e) => setAHot100(e.target.value === '' ? '' : parseInt(e.target.value))}
-          />
-          <input
-            type="number"
-            className="input"
-            placeholder="RIAA Platinum Awards"
-            value={aPlatinum}
-            onChange={(e) => setAPlatinum(e.target.value === '' ? '' : parseInt(e.target.value))}
-          />
-          <input
-            type="number"
-            className="input"
-            placeholder="Grammys"
-            value={aGrammys}
-            onChange={(e) => setAGrammys(e.target.value === '' ? '' : parseInt(e.target.value))}
-          />
+          <input type="number" className="input" placeholder="Billboard Hot 100 entries" value={aHot100} onChange={(e) => setAHot100(e.target.value === '' ? '' : parseInt(e.target.value))} />
+          <input type="number" className="input" placeholder="RIAA Platinum Awards" value={aPlatinum} onChange={(e) => setAPlatinum(e.target.value === '' ? '' : parseInt(e.target.value))} />
+          <input type="number" className="input" placeholder="Grammys" value={aGrammys} onChange={(e) => setAGrammys(e.target.value === '' ? '' : parseInt(e.target.value))} />
 
-          {/* Staff rating + rank (no clamp while typing) */}
-          <input
-            type="number"
-            inputMode="numeric"
-            className="input"
-            placeholder="Staff Rating (50–100)"
-            value={aStaffScore}
-            onChange={(e) => setAStaffScore(e.target.value)}
-          />
-          <input
-            type="number"
-            className="input"
-            placeholder="Staff Rank (e.g., 37) — leave blank if undecided"
-            value={aStaffRank}
-            onChange={(e) => setAStaffRank(e.target.value === '' ? '' : parseInt(e.target.value))}
-          />
+          {/* Staff rating + rank */}
+          <input type="number" inputMode="numeric" className="input" placeholder="Staff Rating (50–100)" value={aStaffScore} onChange={(e) => setAStaffScore(e.target.value)} />
+          <input type="number" className="input" placeholder="Staff Rank (e.g., 37) — leave blank if undecided" value={aStaffRank} onChange={(e) => setAStaffRank(e.target.value === '' ? '' : parseInt(e.target.value))} />
 
-          <button className="btn sm:col-span-2" type="submit">
+          {/* SEO for Artist */}
+          <input className="input sm:col-span-2" placeholder="SEO Title (optional)" value={aSeoTitle} onChange={(e) => setASeoTitle(e.target.value)} />
+          <input className="input sm:col-span-2" placeholder="SEO Description (optional)" value={aSeoDesc} onChange={(e) => setASeoDesc(e.target.value)} />
+
+          {/* Long-form Bio sections */}
+          <div className="sm:col-span-2 mt-2 grid gap-3">
+            <h3 className="text-sm font-semibold">Long-form Bio</h3>
+            <textarea className="input" placeholder="Intro / Overview" value={aBioIntro} onChange={(e) => setABioIntro(e.target.value)} />
+            <textarea className="input" placeholder="Early life / Origins" value={aBioEarly} onChange={(e) => setABioEarly(e.target.value)} />
+            <textarea className="input" placeholder="Mixtape era / Sqad Up / dedications" value={aBioMixtapes} onChange={(e) => setABioMixtapes(e.target.value)} />
+            <textarea className="input" placeholder="Albums / Breakthroughs" value={aBioAlbums} onChange={(e) => setABioAlbums(e.target.value)} />
+            <textarea className="input" placeholder="Business / Young Money / ventures" value={aBioBusiness} onChange={(e) => setABioBusiness(e.target.value)} />
+            <textarea className="input" placeholder="Legacy / Influence" value={aBioLegacy} onChange={(e) => setABioLegacy(e.target.value)} />
+            <textarea className="input" placeholder="Sources (comma separated or free text)" value={aBioSources} onChange={(e) => setABioSources(e.target.value)} />
+          </div>
+
+          {/* Rare Clips */}
+          <div className="sm:col-span-2 mt-2">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold">Rare Clips</h3>
+              <button type="button" className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900" onClick={addRareClip}>
+                + Add clip
+              </button>
+            </div>
+            <ul className="space-y-2">
+              {rareClips.map((rc, i) => (
+                <li key={i} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+                  <input className="input" placeholder="Title (e.g., 2004 radio freestyle)" value={rc.title} onChange={(e) => setRareClipAt(i, { title: e.target.value })} />
+                  <input className="input" placeholder="URL (YouTube/Vimeo/etc.)" value={rc.url} onChange={(e) => setRareClipAt(i, { url: e.target.value })} />
+                  <button type="button" className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900" onClick={() => removeRareClip(i)}>
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <button className="btn sm:col-span-2 mt-2" type="submit">
             Save Artist
           </button>
         </form>
@@ -434,30 +481,19 @@ export default function AdminPage() {
           <input className="input" placeholder="Title" value={rTitle} onChange={(e) => setRTitle(e.target.value)} required />
           <input className="input" placeholder="Slug (e.g., illmatic)" value={rSlug} onChange={(e) => setRSlug(e.target.value)} />
 
-          {/* Smarter Artist type-ahead (loads all, filters locally) */}
+          {/* Artist type-ahead */}
           <div className="sm:col-span-2">
             <ArtistPicker value={rArtistId} onChange={setRArtistId} />
           </div>
 
-          <input
-            type="number"
-            className="input"
-            placeholder="Year (e.g., 1994)"
-            value={rYear}
-            onChange={(e) => setRYear(e.target.value === '' ? '' : parseInt(e.target.value))}
-          />
+          <input type="number" className="input" placeholder="Year (e.g., 1994)" value={rYear} onChange={(e) => setRYear(e.target.value === '' ? '' : parseInt(e.target.value))} />
           <input className="input sm:col-span-2" placeholder="Cover URL" value={rCover} onChange={(e) => setRCover(e.target.value)} />
           <input className="input sm:col-span-2" placeholder="Producers (comma separated)" value={rProducers} onChange={(e) => setRProducers(e.target.value)} />
           <input className="input sm:col-span-2" placeholder="Labels (comma separated)" value={rLabels} onChange={(e) => setRLabels(e.target.value)} />
           <input className="input sm:col-span-2" placeholder="YouTube ID (optional)" value={rYouTube} onChange={(e) => setRYouTube(e.target.value)} />
 
           {/* RIAA Cert */}
-          <input
-            className="input sm:col-span-2"
-            placeholder="RIAA Cert (e.g., 2× Platinum)"
-            value={rRIAA}
-            onChange={(e) => setRRIAA(e.target.value)}
-          />
+          <input className="input sm:col-span-2" placeholder="RIAA Cert (e.g., 2× Platinum)" value={rRIAA} onChange={(e) => setRRIAA(e.target.value)} />
 
           {/* Double album toggle */}
           <label className="sm:col-span-2 inline-flex items-center gap-2 select-none">
@@ -477,18 +513,8 @@ export default function AdminPage() {
               {tracks1.map((t, i) => (
                 <li key={`d1-${i}`} className="flex items-center gap-2">
                   <span className="w-6 text-xs opacity-70 tabular-nums">{i + 1}.</span>
-                  <input
-                    className="input flex-1"
-                    placeholder="Track title"
-                    value={t}
-                    onChange={(e) => setTrack1At(i, e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900"
-                    onClick={() => removeTrack1(i)}
-                    title="Remove track"
-                  >
+                  <input className="input flex-1" placeholder="Track title" value={t} onChange={(e) => setTrack1At(i, e.target.value)} />
+                  <button type="button" className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900" onClick={() => removeTrack1(i)} title="Remove track">
                     Remove
                   </button>
                 </li>
@@ -509,18 +535,8 @@ export default function AdminPage() {
                 {tracks2.map((t, i) => (
                   <li key={`d2-${i}`} className="flex items-center gap-2">
                     <span className="w-6 text-xs opacity-70 tabular-nums">{i + 1}.</span>
-                    <input
-                      className="input flex-1"
-                      placeholder="Track title"
-                      value={t}
-                      onChange={(e) => setTrack2At(i, e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900"
-                      onClick={() => removeTrack2(i)}
-                      title="Remove track"
-                    >
+                    <input className="input flex-1" placeholder="Track title" value={t} onChange={(e) => setTrack2At(i, e.target.value)} />
+                    <button type="button" className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900" onClick={() => removeTrack2(i)} title="Remove track">
                       Remove
                     </button>
                   </li>
@@ -528,6 +544,18 @@ export default function AdminPage() {
               </ul>
             </div>
           )}
+
+          {/* SEO for Release */}
+          <input className="input sm:col-span-2" placeholder="SEO Title (optional)" value={rSeoTitle} onChange={(e) => setRSeoTitle(e.target.value)} />
+          <input className="input sm:col-span-2" placeholder="SEO Description (optional)" value={rSeoDesc} onChange={(e) => setRSeoDesc(e.target.value)} />
+
+          {/* Similar Albums */}
+          <input
+            className="input sm:col-span-2"
+            placeholder="Similar album slugs (comma separated)"
+            value={rSimilar}
+            onChange={(e) => setRSimilar(e.target.value)}
+          />
 
           <button className="btn sm:col-span-2" type="submit">
             Save Release
@@ -553,11 +581,11 @@ export default function AdminPage() {
 
         /* Force readable colors for native <select> popup and its options */
         select.input.select-fix {
-          color: #f4f4f5;           /* closed select text */
+          color: #f4f4f5;
           background: #0a0a0a;
         }
         select.input.select-fix option {
-          color: #0a0a0a !important; /* option rows in popup */
+          color: #0a0a0a !important;
           background: #ffffff !important;
         }
 

@@ -32,7 +32,10 @@ export default function AdminReleasesPage() {
   // selection (bulk delete)
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(total / PAGE_SIZE)),
+    [total]
+  );
 
   // ---------------- Load ----------------
   useEffect(() => {
@@ -61,11 +64,13 @@ export default function AdminReleasesPage() {
       // sort
       if (sort === 'newest') {
         // newest by year desc then id desc
-        query = query.order('year', { ascending: false, nullsFirst: false })
-                     .order('id', { ascending: false });
+        query = query
+          .order('year', { ascending: false, nullsFirst: false })
+          .order('id', { ascending: false });
       } else if (sort === 'oldest') {
-        query = query.order('year', { ascending: true, nullsFirst: true })
-                     .order('id', { ascending: true });
+        query = query
+          .order('year', { ascending: true, nullsFirst: true })
+          .order('id', { ascending: true });
       } else {
         // A–Z by title
         query = query.order('title', { ascending: true });
@@ -95,23 +100,24 @@ export default function AdminReleasesPage() {
 
   // ---------------- Bulk delete ----------------
   const toggleOne = (id: number) => {
-    setSelected(prev => {
+    setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
   const toggleAllOnPage = () => {
-    const ids = rows.map(r => r.id);
-    const allOn = rows.every(r => selected.has(r.id));
-    setSelected(prev => {
+    const ids = rows.map((r) => r.id);
+    const allOn = rows.every((r) => selected.has(r.id));
+    setSelected((prev) => {
       if (allOn) {
         const next = new Set(prev);
-        ids.forEach(id => next.delete(id));
+        ids.forEach((id) => next.delete(id));
         return next;
       } else {
         const next = new Set(prev);
-        ids.forEach(id => next.add(id));
+        ids.forEach((id) => next.add(id));
         return next;
       }
     });
@@ -127,19 +133,17 @@ export default function AdminReleasesPage() {
       return;
     }
     // refresh current page
-    // If we just deleted the whole last page, bump back one
     const remaining = total - ids.length;
     const lastPage = Math.max(1, Math.ceil(remaining / PAGE_SIZE));
-    setPage(p => Math.min(p, lastPage));
-    // trigger reload via dep change:
+    setPage((p) => Math.min(p, lastPage));
     setSelected(new Set());
     setTotal(remaining);
-    // Easiest way: force a small re-run by bumping search to same value
-    setQ(v => v);
+    setQ((v) => v); // trigger reload
   };
 
   // ---------------- UI ----------------
-  if (ok === null) return <main className="mx-auto max-w-6xl px-4 py-8">Checking access…</main>;
+  if (ok === null)
+    return <main className="mx-auto max-w-6xl px-4 py-8">Checking access…</main>;
   if (ok === false) {
     return (
       <main className="mx-auto max-w-6xl px-4 py-8">
@@ -159,12 +163,18 @@ export default function AdminReleasesPage() {
             className="input w-64"
             placeholder="Search title…"
             value={q}
-            onChange={(e) => { setPage(1); setQ(e.target.value); }}
+            onChange={(e) => {
+              setPage(1);
+              setQ(e.target.value);
+            }}
           />
           <select
             className="input"
             value={sort}
-            onChange={(e) => { setPage(1); setSort(e.target.value as any); }}
+            onChange={(e) => {
+              setPage(1);
+              setSort(e.target.value as any);
+            }}
           >
             <option value="newest">Newest</option>
             <option value="oldest">Oldest</option>
@@ -183,7 +193,7 @@ export default function AdminReleasesPage() {
         <label className="text-sm inline-flex items-center gap-2">
           <input
             type="checkbox"
-            checked={rows.length > 0 && rows.every(r => selected.has(r.id))}
+            checked={rows.length > 0 && rows.every((r) => selected.has(r.id))}
             onChange={toggleAllOnPage}
           />
           <span>Select page</span>
@@ -207,7 +217,10 @@ export default function AdminReleasesPage() {
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           {rows.map((r) => (
-            <div key={r.id} className="rounded-lg overflow-hidden border border-zinc-800">
+            <div
+              key={r.id}
+              className="rounded-lg overflow-hidden border border-zinc-800"
+            >
               <div className="relative">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -225,7 +238,9 @@ export default function AdminReleasesPage() {
                 </label>
               </div>
               <div className="p-2">
-                <div className="font-semibold leading-tight truncate">{r.title}</div>
+                <div className="font-semibold leading-tight truncate">
+                  {r.title}
+                </div>
                 <div className="text-xs opacity-70">{r.year ?? '—'}</div>
                 <div className="mt-2 flex gap-2">
                   <Link
@@ -258,15 +273,17 @@ export default function AdminReleasesPage() {
         </button>
         <button
           className="text-sm px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900 disabled:opacity-40"
-          onClick={() => setPage(p => Math.max(1, p - 1))}
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
           disabled={page <= 1}
         >
           ‹ Prev
         </button>
-        <span className="text-xs opacity-70">Page {page} of {totalPages}</span>
+        <span className="text-xs opacity-70">
+          Page {page} of {totalPages}
+        </span>
         <button
           className="text-sm px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900 disabled:opacity-40"
-          onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
           disabled={page >= totalPages}
         >
           Next ›
@@ -289,8 +306,12 @@ export default function AdminReleasesPage() {
           color: #f4f4f5;
           outline: none;
         }
-        .input::placeholder { color: #a1a1aa; }
-        .input:focus { box-shadow: 0 0 0 2px rgba(249,115,22,0.35); }
+        .input::placeholder {
+          color: #a1a1aa;
+        }
+        .input:focus {
+          box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.35);
+        }
       `}</style>
     </main>
   );

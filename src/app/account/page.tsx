@@ -112,9 +112,7 @@ export default function AccountPage() {
       <p className="text-sm opacity-70 mb-6">{email}</p>
 
       <form onSubmit={handleSave} className="grid gap-4">
-        {/* Avatar */}
         <div className="flex items-center gap-4">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={avatarUrl || '/placeholder/cover2.jpg'}
             alt="Avatar"

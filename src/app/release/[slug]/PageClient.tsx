@@ -1,477 +1,594 @@
-// src/app/release/[slug]/page.tsx
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { notFound, useParams } from 'next/navigation';
-import { supabase } from '@/lib/supabaseClient';
-import YouTubeEmbed from '@/components/YouTubeEmbed';
-import AlbumComments from '@/components/AlbumComments';
-import SeoJsonLd from '@/components/SeoJsonLd';
-import type { Metadata } from 'next';
-import { createClient } from '@supabase/supabase-js';
-import { absUrl, SITE_NAME } from '@/lib/seo';
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { supabase } from "@/lib/supabaseClient";
+import Rating from "@/components/Rating";
 
-// ---- Server-side metadata ----
-const supaForMeta = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+type ArtistRow = { id: number | string; name: string; slug: string };
 
-export async function generateMetadata(
-  { params }: { params: { slug: string } }
-): Promise<Metadata> {
-  const { data } = await supaForMeta
-    .from('releases')
-    .select('title,slug,cover_url,year,meta_title,meta_description,og_image,noindex')
-    .eq('slug', params.slug)
-    .single();
-
-  if (!data) return { title: 'Album not found' };
-
-  const title = data.meta_title || `${data.title}${data.year ? ` (${data.year})` : ''}`;
-  const description =
-    data.meta_description ||
-    `Album details, tracklist, and ratings for ${data.title} on ${SITE_NAME}.`;
-  const image = data.og_image || data.cover_url || '/placeholder/cover1.jpg';
-
-  return {
-    title,
-    description,
-    alternates: { canonical: absUrl(`/release/${data.slug}`) },
-    openGraph: {
-      title,
-      description,
-      url: absUrl(`/release/${data.slug}`),
-      images: [{ url: absUrl(image) }],
-      type: 'music.album',
-    },
-    twitter: {
-      title,
-      description,
-      images: [absUrl(image)],
-      card: 'summary_large_image',
-    },
-    robots: data.noindex ? { index: false, follow: false } : { index: true, follow: true },
-  };
-}
-
-// ---- Client types + page ----
 type ReleaseRow = {
+  id: number | string;
+  title: string | null;
+  slug: string;
+  year: number | null;
+  cover_url: string | null;
+
+  producers: string | string[] | null;
+  labels: string | string[] | null;
+
+  youtube_id: string | null;
+  riaa_cert: string | null;
+
+  // legacy columns (may be empty, kept for fallback)
+  tracks: any[] | null;
+  tracks_disc1: any[] | null;
+  tracks_disc2: any[] | null;
+  is_double_album: boolean | null;
+
+  album_info?: string | null;
+  artist_id?: number | string | null;
+  rating_staff?: number | null;
+};
+
+type SimilarLite = { id: number | string; slug: string; title: string; cover_url: string | null };
+
+type Feature = { id?: number | string | null; name: string; slug?: string | null };
+type Track = { title: string; features: Feature[] };
+
+type NameSlug = { name: string; slug: string };
+
+// ➕ Review articles shown on the album page
+type ReviewArticle = {
   id: number;
   title: string;
   slug: string;
   cover_url: string | null;
-  year: number | null;
-  producers: string[] | null;
-  labels: string[] | null;
-  youtube_id: string | null;
-  riaa_cert: string | null;
-  rating_staff: number | null;
-  tracks_disc1: string[] | null;
-  tracks_disc2: string[] | null;
-  artist_id: number | null;
-};
-
-type TrackRow = {
-  disc_no: number;
-  track_no: number;
-  title: string;
-  duration_seconds: number | null;
-  features: { id: number | string; name: string; slug: string }[];
-};
-
-type RatingRow = { rating: number };
-
-type ReviewArticle = {
-  id: number;
-  slug: string;
-  title: string;
-  dek: string | null;
-  author: string | null;
+  excerpt: string | null;
   published_at: string | null;
+  author?: string | null;
 };
 
-export default function ReleasePage() {
-  const { slug } = useParams<{ slug: string }>();
-
-  const [rel, setRel] = useState<ReleaseRow | null>(null);
-  const [tracks, setTracks] = useState<TrackRow[]>([]);
-  const [peopleAvg, setPeopleAvg] = useState<number | null>(null);
-  const [review, setReview] = useState<ReviewArticle | null>(null);
-
-  const [inputRating, setInputRating] = useState<string>('');
-  const [saving, setSaving] = useState(false);
-  const [sessionEmail, setSessionEmail] = useState<string | null>(null);
-
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-
-      const { data: sess } = await supabase.auth.getSession();
-      setSessionEmail(sess.session?.user?.email ?? null);
-
-      const { data: rData, error: rErr } = await supabase
-        .from('releases')
-        .select(
-          'id,title,slug,cover_url,year,producers,labels,youtube_id,riaa_cert,rating_staff,tracks_disc1,tracks_disc2,artist_id'
-        )
-        .eq('slug', slug)
-        .single();
-
-      if (rErr || !rData) {
-        console.error('release fetch error:', rErr);
-        setRel(null);
-        setLoading(false);
-        return;
-      }
-      const release = rData as ReleaseRow;
-      setRel(release);
-
-      // Resolve primary artist slug locally
-      let primarySlugLocal: string | null = null;
-      try {
-        if (release.artist_id != null) {
-          const { data: a } = await supabase
-            .from('artists')
-            .select('slug')
-            .eq('id', release.artist_id)
-            .single();
-          primarySlugLocal = (a as any)?.slug ?? null;
-        }
-        if (!primarySlugLocal) {
-          const { data: ra } = await supabase
-            .from('release_artists')
-            .select('artist:artists(slug)')
-            .eq('release_id', release.id)
-            .order('role', { ascending: true })
-            .limit(1);
-          primarySlugLocal = (ra?.[0] as any)?.artist?.slug ?? null;
-        }
-      } catch {
-        primarySlugLocal = null;
-      }
-
-      // Tracks via view (fallback to legacy)
-      let gotTracks: TrackRow[] = [];
-      try {
-        const { data: vData, error: vErr } = await supabase
-          .from('v_tracks_with_features')
-          .select('disc_no,track_no,title,duration_seconds,features,release_id')
-          .eq('release_id', release.id)
-          .order('disc_no', { ascending: true })
-          .order('track_no', { ascending: true });
-
-        if (!vErr && (vData?.length ?? 0) > 0) {
-          gotTracks = (vData as any).map((t: any) => {
-            const feats = Array.isArray(t.features) ? t.features : [];
-            const filtered =
-              primarySlugLocal
-                ? feats.filter((f: any) => String(f.slug) !== String(primarySlugLocal))
-                : feats;
-            return {
-              disc_no: Number(t.disc_no || 1),
-              track_no: Number(t.track_no || 0),
-              title: t.title,
-              duration_seconds: typeof t.duration_seconds === 'number' ? t.duration_seconds : null,
-              features: filtered,
-            } as TrackRow;
-          });
-        }
-      } catch {}
-
-      if (gotTracks.length === 0) {
-        const d1 = (release.tracks_disc1 || []).map((title, i) => ({
-          disc_no: 1,
-          track_no: i + 1,
-          title,
-          duration_seconds: null,
-          features: [] as TrackRow['features'],
-        }));
-        const d2 = (release.tracks_disc2 || []).map((title, i) => ({
-          disc_no: 2,
-          track_no: i + 1,
-          title,
-          duration_seconds: null,
-          features: [] as TrackRow['features'],
-        }));
-        gotTracks = [...d1, ...d2];
-      }
-      setTracks(gotTracks);
-
-      // People avg
-      try {
-        const { data: pr } = await supabase
-          .from('release_ratings')
-          .select('rating')
-          .eq('release_id', release.id)
-          .limit(5000);
-        const nums = (pr || []).map((x: RatingRow) => Number(x.rating)).filter(Number.isFinite);
-        setPeopleAvg(nums.length ? Math.round(nums.reduce((s, n) => s + n, 0) / nums.length) : null);
-      } catch {
-        setPeopleAvg(null);
-      }
-
-      // Staff review (FK first, fuzzy fallback)
-      try {
-        const { data: artDirect } = await supabase
-          .from('articles')
-          .select('id,slug,title,dek,author,published_at,kind,release_id')
-          .eq('kind', 'review')
-          .eq('release_id', release.id)
-          .order('published_at', { ascending: false })
-          .limit(1);
-
-        let picked = (artDirect || [])[0] as any;
-
-        if (!picked) {
-          const { data: fuzzy } = await supabase
-            .from('articles')
-            .select('id,slug,title,dek,author,published_at,kind')
-            .eq('kind', 'review')
-            .ilike('title', `%${release.title}%`)
-            .order('published_at', { ascending: false })
-            .limit(1);
-          picked = (fuzzy || [])[0] as any;
-        }
-
-        setReview(
-          picked
-            ? {
-                id: picked.id,
-                slug: picked.slug,
-                title: picked.title,
-                dek: picked.dek,
-                author: picked.author,
-                published_at: picked.published_at,
-              }
-            : null
-        );
-      } catch {
-        setReview(null);
-      }
-
-      setLoading(false);
-    })();
-  }, [slug]);
-
-  const overallScore = useMemo(() => {
-    const staff = rel?.rating_staff ?? null;
-    const ppl = peopleAvg ?? null;
-    if (staff == null && ppl == null) return null;
-    if (staff != null && ppl == null) return Math.round(staff);
-    if (staff == null && ppl != null) return Math.round(ppl);
-    return Math.round(0.5 * Number(staff) + 0.5 * Number(ppl));
-  }, [rel?.rating_staff, peopleAvg]);
-
-  async function submitRating(e: React.FormEvent) {
-    e.preventDefault();
-    if (!rel) return;
-    const parsed = parseInt(inputRating, 10);
-    const clamped = Number.isFinite(parsed) ? Math.max(50, Math.min(100, parsed)) : NaN;
-    if (Number.isNaN(clamped)) return alert('Please enter a number from 50 to 100.');
-
-    setSaving(true);
-    try {
-      const { error } = await supabase.from('release_ratings').insert({
-        release_id: rel.id,
-        rating: clamped,
-      });
-      if (error) throw error;
-
-      const { data: pr } = await supabase
-        .from('release_ratings')
-        .select('rating')
-        .eq('release_id', rel.id)
-        .limit(5000);
-      const nums = (pr || []).map((x: RatingRow) => Number(x.rating)).filter(Number.isFinite);
-      setPeopleAvg(nums.length ? Math.round(nums.reduce((s, n) => s + n, 0) / nums.length) : null);
-      setInputRating(' ');
-      setInputRating('');
-      alert('Thanks for rating!');
-    } catch (err: any) {
-      alert(err?.message || 'Could not save rating.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (loading) return <main className="mx-auto max-w-5xl px-4 py-8">Loading…</main>;
-  if (!rel) notFound();
-
-  const byDisc = groupByDisc(tracks);
-
+// ---------- tiny utils ----------
+function asArray<T = any>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : [];
+}
+function normalizePeople(v: unknown): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.map(String).map((s) => s.trim()).filter(Boolean);
+  if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+function extractId(raw: string): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(s)) return s;
+  const m =
+    s.match(/[?&]v=([a-zA-Z0-9_-]{10,})/) ||
+    s.match(/youtu\.be\/([a-zA-Z0-9_-]{10,})/) ||
+    s.match(/embed\/([a-zA-Z0-9_-]{10,})/);
+  return m ? m[1] : null;
+}
+function YouTube({ id }: { id: string }) {
+  const vid = extractId(id);
+  if (!vid) return null;
+  const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(vid)}?rel=0&modestbranding=1`;
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8">
-      {/* JSON-LD */}
-      <SeoJsonLd
-        json={{
-          '@context': 'https://schema.org',
-          '@type': 'MusicAlbum',
-          name: rel.title,
-          url: absUrl(`/release/${rel.slug}`),
-          image: rel.cover_url ? absUrl(rel.cover_url) : undefined,
-          datePublished: rel.year ? `${rel.year}-01-01` : undefined,
-          albumReleaseType: 'https://schema.org/AlbumRelease',
-          aggregateRating:
-            overallScore != null
-              ? { '@type': 'AggregateRating', ratingValue: overallScore, ratingCount: 1 }
-              : undefined,
-        }}
+    <div className="video-wrap">
+      <iframe
+        src={src}
+        title="Album video"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        referrerPolicy="strict-origin-when-cross-origin"
+        loading="lazy"
+        allowFullScreen
       />
-
-      <div className="flex items-start gap-5">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={rel.cover_url || '/placeholder/cover1.jpg'}
-          alt={rel.title}
-          className="h-40 w-40 rounded-xl object-cover border border-zinc-800"
-        />
-        <div className="flex-1">
-          <h1 className="text-3xl font-extrabold">{rel.title}</h1>
-          <div className="mt-1 text-sm opacity-75">{rel.year ?? '—'}</div>
-
-          <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            {rel.producers?.length ? (
-              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
-                <span className="opacity-70">Producers</span>
-                <strong>{rel.producers.join(', ')}</strong>
-              </span>
-            ) : null}
-            {rel.labels?.length ? (
-              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
-                <span className="opacity-70">Labels</span>
-                <strong>{rel.labels.join(', ')}</strong>
-              </span>
-            ) : null}
-            {rel.riaa_cert ? (
-              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
-                <span className="opacity-70">RIAA</span>
-                <strong>{rel.riaa_cert}</strong>
-              </span>
-            ) : null}
-            {rel.rating_staff != null && (
-              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
-                <span role="img" aria-label="mic">🎙️</span>
-                <strong className="tabular-nums">{rel.rating_staff}</strong>
-              </span>
-            )}
-            {peopleAvg != null && (
-              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
-                <span role="img" aria-label="fire">🔥</span>
-                <strong className="tabular-nums">{peopleAvg}</strong>
-              </span>
-            )}
-            {overallScore != null && (
-              <span className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-900/40 px-1.5 py-0.5">
-                <span className="opacity-70">Overall</span>
-                <strong className="tabular-nums">{overallScore}</strong>
-              </span>
-            )}
-          </div>
-
-          {sessionEmail ? (
-            <form onSubmit={submitRating} className="mt-4 flex items-center gap-2">
-              <input
-                type="number"
-                inputMode="numeric"
-                className="input w-28"
-                placeholder="Rate 50–100"
-                value={inputRating}
-                onChange={(e) => setInputRating(e.target.value)}
-              />
-              <button className="btn" disabled={saving} type="submit">Submit</button>
-            </form>
-          ) : (
-            <div className="mt-3 text-xs opacity-75">
-              <a href="/login" className="underline">Sign in</a> to rate this album.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {rel.youtube_id && (
-        <section className="mt-6">
-          <YouTubeEmbed input={rel.youtube_id} title={`${rel.title} video`} />
-        </section>
-      )}
-
-      <section className="mt-8">
-        <h2 className="text-xl font-bold mb-3">Tracklist</h2>
-        {!tracks.length ? (
-          <p className="opacity-70 text-sm">No tracks found.</p>
-        ) : (
-          Object.keys(byDisc).map((disc) => (
-            <div key={disc} className="mb-4">
-              <div className="text-sm opacity-70 mb-2">Disc {disc}</div>
-              <ol className="space-y-1 list-decimal ml-5">
-                {byDisc[disc].map((t) => (
-                  <li key={`${disc}-${t.track_no}`} className="pl-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{t.title}</span>
-                      {t.features?.length ? (
-                        <span className="opacity-80 text-xs">
-                          feat.{' '}
-                          {t.features.map((f, idx) => (
-                            <span key={String(f.id)}>
-                              <Link href={`/artist/${f.slug}`} className="underline">{f.name}</Link>
-                              {idx < t.features.length - 1 ? ', ' : ''}
-                            </span>
-                          ))}
-                        </span>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ))
-        )}
-      </section>
-
-      {review && (
-        <section className="mt-8 rounded-xl border border-zinc-800 p-4">
-          <div className="text-xs uppercase opacity-60 mb-1">Staff Review</div>
-          <h3 className="font-semibold">
-            <Link href={`/articles/${review.slug}`} className="underline">{review.title}</Link>
-          </h3>
-          {review.dek ? <p className="opacity-85 mt-1">{review.dek}</p> : null}
-          {review.author || review.published_at ? (
-            <div className="text-xs opacity-60 mt-2">
-              {review.author ? <>By {review.author}</> : null}
-              {review.author && review.published_at ? ' • ' : null}
-              {review.published_at ? new Date(review.published_at).toLocaleDateString() : null}
-            </div>
-          ) : null}
-        </section>
-      )}
-
-      <section className="mt-8">
-        <h2 className="text-lg font-bold mb-3">Comments</h2>
-        <AlbumComments releaseId={rel.id} />
-      </section>
-
       <style jsx>{`
-        .input { background:#0a0a0a; border:1px solid #27272a; border-radius:0.5rem; padding:0.5rem 0.75rem; color:#f4f4f5; outline:none; }
-        .input::placeholder { color:#a1a1aa; }
-        .input:focus { box-shadow:0 0 0 2px rgba(249,115,22,0.35); }
-        .btn { background:#f97316; color:#000; font-weight:700; border-radius:0.5rem; padding:0.55rem 0.9rem; }
+        .video-wrap {
+          position: relative;
+          width: 100%;
+          padding-bottom: 56.25%;
+          overflow: hidden;
+          border-radius: 0.75rem;
+          border: 1px solid #27272a;
+          background: #000;
+        }
+        .video-wrap > iframe {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+        }
       `}</style>
-    </main>
+    </div>
+  );
+}
+function normalizeRiaa(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  return raw.replace(/\bx\b/gi, "×");
+}
+function RIAABadge({ cert }: { cert: string | null | undefined }) {
+  const label = normalizeRiaa(cert);
+  if (!label) return null;
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 bg-cyan-500/20 text-cyan-200 ring-cyan-600/40"
+      title="RIAA Certification"
+    >
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden>
+        <path d="M12 2l2.39 4.84L20 8l-4 3.9.94 5.48L12 15.77 7.06 17.38 8 11.9 4 8l5.61-1.16L12 2z" fill="currentColor" />
+      </svg>
+      {label}
+    </span>
   );
 }
 
-function groupByDisc(list: TrackRow[]) {
-  const map: Record<string, TrackRow[]> = {};
-  for (const t of list) {
-    const k = String(t.disc_no || 1);
-    if (!map[k]) map[k] = [];
-    map[k].push(t);
+// ---------- linkify helpers (same approach as artist page) ----------
+function escapeRegExp(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function makeNameRegex(namesPipe: string): RegExp | null {
+  if (!namesPipe) return null;
+  return new RegExp(`(^|[^\\p{L}])(${namesPipe})(?=$|[^\\p{L}])`, "giu");
+}
+function linkifyText(text: string, index: Map<string, string>): ReactNode {
+  if (!text) return text;
+
+  const names = Array.from(index.keys())
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp)
+    .join("|");
+
+  const rx = makeNameRegex(names);
+  if (!rx) return text;
+
+  const out: ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = rx.exec(text)) !== null) {
+    const matchStart = m.index;
+    const beforeSep = m[1] ?? "";
+    const matchedName = m[2] ?? "";
+
+    if (matchStart > last) out.push(text.slice(last, matchStart));
+    if (beforeSep) out.push(beforeSep);
+
+    const slug = index.get(matchedName.toLowerCase());
+    if (slug) {
+      out.push(
+        <Link key={`${slug}-${last}-${rx.lastIndex}`} href={`/artist/${slug}`} className="underline hover:opacity-100 opacity-90">
+          {matchedName}
+        </Link>
+      );
+    } else {
+      out.push(matchedName);
+    }
+    last = rx.lastIndex;
   }
-  for (const k of Object.keys(map)) {
-    map[k].sort((a, b) => a.track_no - b.track_no);
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+// ---------- page ----------
+export default function PageClient({ slug }: { slug: string }) {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  const [rel, setRel] = useState<ReleaseRow | null>(null);
+  const [artists, setArtists] = useState<ArtistRow[]>([]);
+  const [similars, setSimilars] = useState<SimilarLite[]>([]);
+  const [disc1, setDisc1] = useState<Track[]>([]);
+  const [disc2, setDisc2] = useState<Track[]>([]);
+
+  // name→slug index for linkifying album_info
+  const [nameIndex, setNameIndex] = useState<Map<string, string>>(new Map());
+  const [namesLoaded, setNamesLoaded] = useState(false);
+
+  // ➕ reviews state
+  const [reviews, setReviews] = useState<ReviewArticle[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      setLoading(true);
+      setErr(null);
+
+      // Load release core
+      const { data: rData, error: rErr } = await supabase
+        .from("releases")
+        .select(`
+          id, title, slug, year, cover_url,
+          producers, labels,
+          youtube_id, riaa_cert,
+          tracks, tracks_disc1, tracks_disc2, is_double_album,
+          album_info, artist_id, rating_staff
+        `)
+        .eq("slug", slug)
+        .maybeSingle();
+
+      if (rErr) { if (alive) { setErr(rErr.message); setLoading(false); } return; }
+      if (!rData) { if (alive) { setErr("Album not found."); setLoading(false); } return; }
+
+      const release = rData as ReleaseRow;
+      if (!alive) return;
+      setRel(release);
+
+      // Load artists (junction first, fallback to legacy)
+      let artistRows: ArtistRow[] = [];
+      const { data: raRows } = await supabase
+        .from("release_artists")
+        .select("artist_id, position")
+        .eq("release_id", release.id)
+        .order("position", { ascending: true });
+
+      if (raRows?.length) {
+        const ids = raRows.map((r: any) => r.artist_id).filter(Boolean);
+        if (ids.length) {
+          const { data: aRows } = await supabase
+            .from("artists")
+            .select("id,name,slug")
+            .in("id", ids as any[]);
+          artistRows = ((aRows || []) as ArtistRow[]);
+        }
+      } else if (release.artist_id != null) {
+        const { data: a } = await supabase
+          .from("artists")
+          .select("id,name,slug")
+          .eq("id", release.artist_id as any)
+          .maybeSingle();
+        if (a) artistRows = [a as ArtistRow];
+      }
+      if (!alive) return;
+      setArtists(artistRows);
+
+      // Tracks from view
+      const { data: tRows, error: tErr } = await supabase
+        .from("v_tracks_with_features")
+        .select("disc_no, track_no, title, features")
+        .eq("release_id", release.id)
+        .order("disc_no", { ascending: true })
+        .order("track_no", { ascending: true });
+
+      if (tErr) {
+        console.error("tracks view error:", tErr);
+      } else {
+        const d1: Track[] = [];
+        const d2: Track[] = [];
+
+        asArray<any>(tRows).forEach((row) => {
+          const feats: Feature[] = asArray<any>(row.features).map((f) => ({
+            id: f?.id ?? null,
+            name: String(f?.name ?? "").trim(),
+            slug: f?.slug ?? null,
+          })).filter((f) => f.name);
+
+        const trk: Track = { title: String(row.title || "").trim(), features: feats };
+          const disc = Number(row.disc_no ?? 1);
+          if (disc > 1) d2.push(trk); else d1.push(trk);
+        });
+
+        if (alive) { setDisc1(d1); setDisc2(d2); }
+      }
+
+      // Similar (optional)
+      const { data: simJoin } = await supabase
+        .from("release_similar")
+        .select("position, similar_release_id")
+        .eq("release_id", release.id)
+        .order("position", { ascending: true });
+
+      if (simJoin?.length) {
+        const ids = simJoin.map((s: any) => s.similar_release_id).filter(Boolean);
+        if (ids.length) {
+          const { data: sRows } = await supabase
+            .from("releases")
+            .select("id,slug,title,cover_url")
+            .in("id", ids as any[]);
+          const sim = ((sRows || []) as any[]).map((x) => ({
+            id: x.id, slug: x.slug, title: x.title, cover_url: x.cover_url ?? null,
+          })) as SimilarLite[];
+          if (alive) setSimilars(sim);
+        }
+      }
+
+      // ➕ Reviews for this release (articles.kind='review')
+      {
+        const { data: byId, error: idErr } = await supabase
+          .from("articles")
+          .select("id,title,slug,cover_url,excerpt,published_at,author,kind,is_published,release_id")
+          .eq("is_published", true)
+          .eq("kind", "review")
+          .eq("release_id", release.id)
+          .order("published_at", { ascending: false })
+          .limit(12);
+
+        let rows: ReviewArticle[] = (byId || []) as any;
+
+        // Fallback if older reviews didn't store release_id
+        if (!idErr && rows.length === 0) {
+          const title = (release.title || "").trim();
+          if (title) {
+            const { data: byTitle } = await supabase
+              .from("articles")
+              .select("id,title,slug,cover_url,excerpt,published_at,author,kind,is_published")
+              .eq("is_published", true)
+              .eq("kind", "review")
+              .ilike("title", `%${title}%`)
+              .order("published_at", { ascending: false })
+              .limit(6);
+            rows = (byTitle || []) as any;
+          }
+        }
+
+        if (alive) setReviews(rows);
+      }
+
+      if (alive) setLoading(false);
+    })();
+
+    return () => { alive = false; };
+  }, [slug]);
+
+  // Load name index for linkifying
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const PAGE = 500;
+      let from = 0;
+      const map = new Map<string, string>();
+      while (true) {
+        const { data, error } = await supabase
+          .from("artists")
+          .select("name,slug")
+          .order("name", { ascending: true })
+          .range(from, from + PAGE - 1);
+        if (error) break;
+        if (!data || data.length === 0) break;
+
+        for (const r of data as NameSlug[]) {
+          const n = (r.name || "").trim();
+          const s = (r.slug || "").trim();
+          if (!n || !s) continue;
+          map.set(n.toLowerCase(), s);
+        }
+
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+      if (!alive) return;
+      setNameIndex(map);
+      setNamesLoaded(true);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const view = useMemo(() => {
+    if (!rel) return null;
+    return {
+      title: rel.title || rel.slug,
+      cover: rel.cover_url,
+      year: rel.year ?? undefined,
+      producers: normalizePeople(rel.producers),
+      labels: normalizePeople(rel.labels),
+      youtube: rel.youtube_id ?? undefined,
+      riaa: rel.riaa_cert ?? undefined,
+      albumInfo: rel.album_info ?? undefined,
+      isDouble: (disc2.length > 0) || (!!rel.is_double_album && disc1.length > 0),
+    };
+  }, [rel, disc1.length, disc2.length]);
+
+  if (loading) return <main className="mx-auto max-w-5xl px-4 py-8">Loading…</main>;
+  if (err) {
+    return (
+      <main className="mx-auto max-w-5xl px-4 py-8">
+        <div className="rounded-lg border border-red-800 bg-red-950/40 p-3 text-red-300 text-sm">{err}</div>
+      </main>
+    );
   }
-  return map;
+  if (!rel || !view) return <main className="mx-auto max-w-5xl px-4 py-8">Not found.</main>;
+
+  const renderLinkedPara = (t: string, i: number) => (
+    <p key={i} className="opacity-90 whitespace-pre-wrap">
+      {namesLoaded ? linkifyText(t, nameIndex) : t}
+    </p>
+  );
+
+  return (
+    <main className="mx-auto max-w-5xl px-4 py-8">
+      {/* Header */}
+      <header className="flex gap-4">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={view.cover || "/placeholder/cover1.jpg"}
+          alt={view.title}
+          className="h-28 w-28 rounded-lg object-cover border border-zinc-800"
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-2xl font-extrabold leading-tight">{view.title}</h1>
+            <RIAABadge cert={view.riaa} />
+          </div>
+
+          <div className="mt-1 text-sm opacity-90 flex items-center gap-2 flex-wrap">
+            {artists.map((a, i) => (
+              <span key={String(a.id)}>
+                <Link href={`/artist/${a.slug}`} className="underline hover:opacity-100 opacity-90">
+                  {a.name}
+                </Link>
+                {i < artists.length - 1 ? ", " : ""}
+              </span>
+            ))}
+            {view.year ? <span>{artists.length ? " • " : ""}{view.year}</span> : null}
+          </div>
+
+          {/* People rating control (50–100) */}
+          <div className="mt-2">
+            <Rating kind="release" itemId={rel.id} />
+          </div>
+
+          {/* Producers / Labels */}
+          <div className="mt-3 grid grid-cols-2 gap-6 text-sm">
+            <div>
+              {view.producers.length > 0 && (
+                <>
+                  <div className="opacity-70 text-xs">Producers</div>
+                  <div>{view.producers.join(", ")}</div>
+                </>
+              )}
+            </div>
+            <div>
+              {view.labels.length > 0 && (
+                <>
+                  <div className="opacity-70 text-xs">Labels</div>
+                  <div>{view.labels.join(", ")}</div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* YouTube */}
+      {view.youtube && <div className="mt-6"><YouTube id={view.youtube} /></div>}
+
+      {/* Album Info (linkified) */}
+      {view.albumInfo && (
+        <section className="mt-8">
+          <h2 className="font-bold mb-2">Album Info</h2>
+          {(view.albumInfo || "")
+            .split(/\n{2,}/)
+            .map((para, i) => renderLinkedPara(para, i))}
+        </section>
+      )}
+
+      {/* Tracklist (from view) */}
+      {(disc1.length > 0 || disc2.length > 0) && (
+        <section className="mt-10">
+          <h2 className="font-bold mb-3">Tracklist{view.isDouble ? " — Disc 1" : ""}</h2>
+
+          {disc1.length > 0 ? (
+            <ol className="list-decimal pl-6 space-y-1">
+              {disc1.map((t, i) => (
+                <li key={`d1-${i}`}>
+                  <span>{t.title}</span>
+                  {t.features && t.features.length > 0 ? (
+                    <span className="opacity-80"> — feat.{" "}
+                      {t.features.map((f, idx) => {
+                        const name = f.name || "";
+                        const slug = f.slug || "";
+                        return slug ? (
+                          <span key={name + idx}>
+                            <Link href={`/artist/${slug}`} className="underline hover:opacity-100">{name}</Link>
+                            {idx < t.features.length - 1 ? ", " : ""}
+                          </span>
+                        ) : (
+                          <span key={name + idx}>
+                            {name}{idx < t.features.length - 1 ? ", " : ""}
+                          </span>
+                        );
+                      })}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <div className="opacity-70 text-sm">No tracks yet.</div>
+          )}
+
+          {view.isDouble && (
+            <>
+              <h3 className="font-semibold mt-6 mb-2">Disc 2</h3>
+              {disc2.length > 0 ? (
+                <ol className="list-decimal pl-6 space-y-1">
+                  {disc2.map((t, i) => (
+                    <li key={`d2-${i}`}>
+                      <span>{t.title}</span>
+                      {t.features && t.features.length > 0 ? (
+                        <span className="opacity-80"> — feat.{" "}
+                          {t.features.map((f, idx) => {
+                            const name = f.name || "";
+                            const slug = f.slug || "";
+                            return slug ? (
+                              <span key={name + idx}>
+                                <Link href={`/artist/${slug}`} className="underline hover:opacity-100">{name}</Link>
+                                {idx < t.features.length - 1 ? ", " : ""}
+                              </span>
+                            ) : (
+                              <span key={name + idx}>
+                                {name}{idx < t.features.length - 1 ? ", " : ""}
+                              </span>
+                            );
+                          })}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <div className="opacity-70 text-sm">No tracks for disc 2.</div>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
+      {/* ➕ Reviews */}
+      {reviews.length > 0 && (
+        <section className="mt-10">
+          <h2 className="font-bold mb-3">Reviews</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {reviews.map((r) => (
+              <Link
+                key={r.id}
+                href={`/articles/${r.slug}`}
+                className="group rounded-lg overflow-hidden border border-zinc-800 hover:border-zinc-600"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={r.cover_url || "/placeholder/hero.jpg"}
+                  alt={r.title}
+                  className="w-full h-40 object-cover"
+                />
+                <div className="p-3">
+                  <div className="font-semibold leading-tight group-hover:underline">{r.title}</div>
+                  <div className="text-xs opacity-70 mt-1">
+                    {r.published_at ? new Date(r.published_at).toLocaleDateString() : "—"}
+                    {r.author ? ` • ${r.author}` : ""}
+                  </div>
+                  {r.excerpt && <p className="text-sm opacity-80 line-clamp-2 mt-1">{r.excerpt}</p>}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Similar */}
+      <section className="mt-10">
+        <h2 className="font-bold mb-3">Similar Albums</h2>
+        {similars.length === 0 ? (
+          <div className="opacity-70 text-sm">No similar albums yet.</div>
+        ) : (
+          <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            {similars.map((s) => (
+              <li key={String(s.id)} className="rounded-lg border border-zinc-800 overflow-hidden">
+                <Link href={`/release/${s.slug}`} className="block">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={s.cover_url || "/placeholder/cover1.jpg"}
+                    alt={s.title}
+                    className="w-full aspect-square object-cover"
+                  />
+                  <div className="p-2 text-sm font-semibold truncate">{s.title}</div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </main>
+  );
 }

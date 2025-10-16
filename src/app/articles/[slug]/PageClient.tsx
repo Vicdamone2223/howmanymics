@@ -1,76 +1,24 @@
-// src/app/articles/[slug]/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
-import { notFound, useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-import SeoJsonLd from '@/components/SeoJsonLd';
-import type { Metadata } from 'next';
-import { createClient } from '@supabase/supabase-js';
-import { absUrl, SITE_NAME } from '@/lib/seo';
-
-/* ---------- Server metadata ---------- */
-const supaForMeta = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
-export async function generateMetadata(
-  { params }: { params: { slug: string } }
-): Promise<Metadata> {
-  const { data } = await supaForMeta
-    .from('articles')
-    .select('title,slug,dek,cover_url,is_published,meta_title,meta_description,og_image,noindex,kind')
-    .eq('slug', params.slug)
-    .single();
-
-  if (!data) return { title: 'Article not found' };
-
-  const title = data.meta_title || data.title;
-  const description = data.meta_description || data.dek || SITE_NAME;
-  const image = data.og_image || data.cover_url || '/placeholder/hero1.jpg';
-
-  return {
-    title,
-    description,
-    alternates: { canonical: absUrl(`/articles/${data.slug}`) },
-    openGraph: {
-      title,
-      description,
-      url: absUrl(`/articles/${data.slug}`),
-      images: [{ url: absUrl(image) }],
-      type: 'article',
-    },
-    twitter: {
-      title,
-      description,
-      images: [absUrl(image)],
-      card: 'summary_large_image',
-    },
-    robots:
-      data.noindex || !data.is_published
-        ? { index: false, follow: false }
-        : { index: true, follow: true },
-  };
-}
 
 /* ---------- Types ---------- */
 type Row = {
   title: string;
   cover_url: string | null;
-  body: string | null;
+  body: string | null; // plain text with URLs
   author: string | null;
   published_at: string | null;
   kind: 'article' | 'review';
 };
 
-/* ---------- Page ---------- */
-export default function ArticleReader() {
-  const { slug } = useParams<{ slug: string }>();
+export default function PageClient({ slug }: { slug: string }) {
   const [row, setRow] = useState<Row | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let alive = true;
     (async () => {
       const { data, error } = await supabase
         .from('articles')
@@ -78,6 +26,7 @@ export default function ArticleReader() {
         .eq('slug', slug)
         .single();
 
+      if (!alive) return;
       if (error) {
         console.error('article fetch error:', error);
         setRow(null);
@@ -86,26 +35,22 @@ export default function ArticleReader() {
       }
       setLoading(false);
     })();
+    return () => {
+      alive = false;
+    };
   }, [slug]);
 
   if (loading) return <main className="mx-auto max-w-3xl px-4 py-8">Loading…</main>;
-  if (!row) notFound();
+  if (!row) {
+    return (
+      <main className="mx-auto max-w-3xl px-4 py-8">
+        <h1 className="text-2xl font-bold">Article not found</h1>
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8 space-y-4">
-      {/* JSON-LD */}
-      <SeoJsonLd
-        json={{
-          '@context': 'https://schema.org',
-          '@type': row.kind === 'review' ? 'Review' : 'Article',
-          headline: row.title,
-          image: row.cover_url ? absUrl(row.cover_url) : undefined,
-          author: row.author ? { '@type': 'Person', name: row.author } : undefined,
-          datePublished: row.published_at || undefined,
-          mainEntityOfPage: absUrl(`/articles/${slug}`),
-        }}
-      />
-
       <div className="text-xs uppercase opacity-60">
         {row.kind === 'review' ? 'Review' : 'Article'}
       </div>
@@ -117,6 +62,7 @@ export default function ArticleReader() {
         {row.published_at ? new Date(row.published_at).toLocaleDateString() : null}
       </div>
 
+      {/* Hero image */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       {row.cover_url && (
         <img
@@ -126,6 +72,7 @@ export default function ArticleReader() {
         />
       )}
 
+      {/* Body with auto embeds + linkified paragraphs */}
       <ArticleBody body={row.body ?? ''} />
     </main>
   );
@@ -142,20 +89,28 @@ function ArticleBody({ body }: { body: string }) {
       {lines.map((line, i) => {
         const t = line.trim();
 
+        // YouTube (pure link)
         if (onlyUrl(t) && isYouTubeUrl(t)) {
           const vid = extractYouTubeId(t);
           return vid ? <YouTubeBlock key={`yt-${i}`} id={vid} /> : <P key={`p-${i}`}>{line}</P>;
         }
 
+        // Twitter/X (pure link)
         if (onlyUrl(t) && isTwitterUrl(t)) {
           return <TwitterEmbed key={`tw-${i}`} url={t} />;
         }
 
+        // Instagram (pure link)
         if (onlyUrl(t) && isInstagramUrl(t)) {
           return <InstagramEmbed key={`ig-${i}`} url={t} />;
         }
 
-        return <P key={`p-${i}`}>{linkifyToNodes(line)}</P>;
+        // Default paragraph
+        return (
+          <P key={`p-${i}`}>
+            {linkifyToNodes(line)}
+          </P>
+        );
       })}
     </article>
   );
@@ -217,6 +172,7 @@ function InstagramEmbed({ url }: { url: string }) {
 }
 
 /* ---------- Helpers ---------- */
+
 function onlyUrl(s: string) {
   return /^https?:\/\/\S+$/i.test(s);
 }
@@ -262,12 +218,19 @@ function linkifyToNodes(text: string) {
   const urlRegex = /(https?:\/\/[^\s)]+)(?=[\s)]|$)/g;
   let lastIndex = 0;
   let m: RegExpExecArray | null;
+
   while ((m = urlRegex.exec(text)) !== null) {
     const [url] = m;
     const start = m.index;
     if (start > lastIndex) parts.push(text.slice(lastIndex, start));
     parts.push(
-      <a key={`${url}-${start}`} href={url} target="_blank" rel="noopener noreferrer" className="underline">
+      <a
+        key={`${url}-${start}`}
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="underline"
+      >
         {url}
       </a>
     );
