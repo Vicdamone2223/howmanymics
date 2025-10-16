@@ -4,7 +4,7 @@ import Script from 'next/script';
 import { Suspense } from 'react';
 import './globals.css';
 import ClientShell from '@/components/ClientShell';
-import GA from '@/components/GA'; // uses usePathname/useSearchParams
+import GA from '@/components/GA';
 
 export const metadata: Metadata = {
   title: 'How Many Mics',
@@ -25,7 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
-        {/* ✅ Ezoic Privacy Scripts */}
+        {/* ✅ Ezoic Privacy + Header scripts (already added earlier) */}
         <Script
           src="https://cmp.gatekeeperconsent.com/min.js"
           data-cfasync="false"
@@ -36,8 +36,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           data-cfasync="false"
           strategy="beforeInteractive"
         />
-
-        {/* ✅ Ezoic Header Script */}
         <Script
           async
           src="//www.ezojs.com/ezoic/sa.min.js"
@@ -52,13 +50,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
 
       <body className="min-h-screen bg-zinc-950 text-zinc-100">
-        {/* Anything that calls usePathname/useSearchParams MUST be inside Suspense */}
+        {/* 🔝 Ezoic Top of Page Ad */}
+        <div id="ezoic-pub-ad-placeholder-101"></div>
+
         <Suspense fallback={null}>
           <GA />
           <ClientShell>{children}</ClientShell>
         </Suspense>
 
-        {/* ✅ Organization JSON-LD */}
+        {/* 🔚 Ezoic Bottom of Page Ad */}
+        <div id="ezoic-pub-ad-placeholder-103"></div>
+
+        {/* Organization JSON-LD */}
         <Script
           id="org-jsonld"
           type="application/ld+json"

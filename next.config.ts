@@ -3,8 +3,17 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   eslint: {
-    // Only needed if you still want to skip lint on Vercel builds
+    // Skip lint errors during Vercel builds (optional)
     ignoreDuringBuilds: true,
+  },
+
+  async rewrites() {
+    return [
+      {
+        source: '/ads.txt',
+        destination: 'https://srv.adstxtmanager.com/19390/howmanymics.com',
+      },
+    ];
   },
 };
 
