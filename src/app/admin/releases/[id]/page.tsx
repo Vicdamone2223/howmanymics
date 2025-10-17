@@ -13,6 +13,9 @@ type ArtistRow = { id: number | string; name: string; slug: string };
 type ReleaseLite = { id: number | string; title: string; slug: string };
 type SimilarRow = { position: number; s: ReleaseLite | null };
 
+// NEW: single with date
+type SingleObj = { title: string; date: string | null }; // YYYY-MM-DD or null
+
 type ReleaseRow = {
   id: number | string;
   title: string;
@@ -34,12 +37,13 @@ type ReleaseRow = {
   seo_description: string | null;
   album_info: string | null; // legacy freeform bucket
 
-  // NEW (add these columns via migration; UI will also fall back to album_info if absent)
+  // NEW structured fields
   album_overview?: string | null;
-  album_background?: string | null; // background / creation process
-  album_commercial?: string | null; // commercial success
-  album_critical?: string | null; // critical success
-  album_singles?: string[] | null; // up to 5
+  album_background?: string | null;   // background / creation process
+  album_commercial?: string | null;   // commercial success
+  album_critical?: string | null;     // critical success
+  album_singles?: string[] | null;    // legacy titles-only (kept for compat)
+  album_singles_json?: SingleObj[] | null; // NEW preferred (title + date)
 };
 
 function slugify(s: string) {
@@ -60,16 +64,20 @@ function buildAlbumInfoMarkdown(parts: {
   background: string;
   commercial: string;
   critical: string;
-  singles: string[];
+  singles: SingleObj[];
 }) {
+  const singlesLines = parts.singles
+    .filter((s) => s.title.trim())
+    .slice(0, 5)
+    .map((s) => `- ${s.title}${s.date ? ` — ${s.date}` : ''}`)
+    .join('\n');
+
   const b = [
     parts.overview && `## Overview\n\n${parts.overview.trim()}`,
     parts.background && `## Background / Creation\n\n${parts.background.trim()}`,
     parts.commercial && `## Commercial Success\n\n${parts.commercial.trim()}`,
     parts.critical && `## Critical Success\n\n${parts.critical.trim()}`,
-    parts.singles.filter(Boolean).length
-      ? `## Singles\n\n${parts.singles.filter(Boolean).map((s) => `- ${s}`).join('\n')}`
-      : ''
+    singlesLines && `## Singles\n\n${singlesLines}`,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -78,17 +86,43 @@ function buildAlbumInfoMarkdown(parts: {
 
 function parseAlbumInfoMarkdown(s?: string | null) {
   // extremely light parser; looks for our section headers if present
-  if (!s) return { overview: '', background: '', commercial: '', critical: '', singles: [] as string[] };
-  const out = { overview: '', background: '', commercial: '', critical: '', singles: [] as string[] };
+  if (!s)
+    return {
+      overview: '',
+      background: '',
+      commercial: '',
+      critical: '',
+      singles: [] as SingleObj[],
+    };
+  const out = {
+    overview: '',
+    background: '',
+    commercial: '',
+    critical: '',
+    singles: [] as SingleObj[],
+  };
   const blocks = (s || '').split(/\n(?=##\s)/g);
   for (const block of blocks) {
-    if (/^##\s+Overview\b/i.test(block)) out.overview = block.replace(/^##\s+Overview\s*/i, '').trim();
-    else if (/^##\s+Background\b/i.test(block)) out.background = block.replace(/^##\s+Background.*\n?/i, '').trim();
-    else if (/^##\s+Commercial/i.test(block)) out.commercial = block.replace(/^##\s+Commercial.*\n?/i, '').trim();
-    else if (/^##\s+Critical/i.test(block)) out.critical = block.replace(/^##\s+Critical.*\n?/i, '').trim();
+    if (/^##\s+Overview\b/i.test(block))
+      out.overview = block.replace(/^##\s+Overview\s*/i, '').trim();
+    else if (/^##\s+Background\b/i.test(block))
+      out.background = block.replace(/^##\s+Background.*\n?/i, '').trim();
+    else if (/^##\s+Commercial/i.test(block))
+      out.commercial = block.replace(/^##\s+Commercial.*\n?/i, '').trim();
+    else if (/^##\s+Critical/i.test(block))
+      out.critical = block.replace(/^##\s+Critical.*\n?/i, '').trim();
     else if (/^##\s+Singles/i.test(block)) {
-      const lines = block.split(/\n/).slice(1).map((l) => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean);
-      out.singles = lines.slice(0, 5);
+      out.singles = block
+        .split('\n')
+        .slice(1)
+        .map((l) => l.replace(/^[-*]\s*/, '').trim())
+        .filter(Boolean)
+        .map((t) => {
+          // supports "- Title — YYYY-MM-DD"
+          const m = t.match(/^(.*)\s—\s(\d{4}-\d{2}-\d{2})$/);
+          return m ? { title: m[1].trim(), date: m[2] } : { title: t, date: null };
+        })
+        .slice(0, 5);
     }
   }
   return out;
@@ -131,7 +165,7 @@ export default function EditReleasePage() {
   const [bioBackground, setBioBackground] = useState('');
   const [bioCommercial, setBioCommercial] = useState('');
   const [bioCritical, setBioCritical] = useState('');
-  const [singles, setSingles] = useState<string[]>(['']); // up to 5
+  const [singles, setSingles] = useState<SingleObj[]>([{ title: '', date: null }]); // up to 5
 
   // multi-artist
   const [albumArtists, setAlbumArtists] = useState<ArtistRow[]>([]);
@@ -222,19 +256,35 @@ export default function EditReleasePage() {
       setSeoDesc(rel.seo_description || '');
 
       // NEW bio sections (prefer explicit cols; otherwise parse album_info)
-      if (rel.album_overview || rel.album_background || rel.album_commercial || rel.album_critical || rel.album_singles) {
+      if (
+        rel.album_overview ||
+        rel.album_background ||
+        rel.album_commercial ||
+        rel.album_critical ||
+        rel.album_singles ||
+        rel.album_singles_json
+      ) {
         setBioOverview(rel.album_overview || '');
         setBioBackground(rel.album_background || '');
         setBioCommercial(rel.album_commercial || '');
         setBioCritical(rel.album_critical || '');
-        setSingles((rel.album_singles && rel.album_singles.length ? rel.album_singles : ['']).slice(0, 5));
+
+        if (rel.album_singles_json?.length) {
+          setSingles(rel.album_singles_json.slice(0, 5));
+        } else if (rel.album_singles?.length) {
+          setSingles(rel.album_singles.slice(0, 5).map((t) => ({ title: t, date: null })));
+        } else {
+          setSingles([{ title: '', date: null }]);
+        }
       } else {
         const parsed = parseAlbumInfoMarkdown(rel.album_info || '');
         setBioOverview(parsed.overview);
         setBioBackground(parsed.background);
         setBioCommercial(parsed.commercial);
         setBioCritical(parsed.critical);
-        setSingles(parsed.singles.length ? parsed.singles : ['']);
+        setSingles(
+          parsed.singles.length ? parsed.singles : [{ title: '', date: null }]
+        );
       }
 
       // release artists (junction)
@@ -285,9 +335,14 @@ export default function EditReleasePage() {
   const removeTrack2 = (i: number) => setTracks2((p) => (p.length > 1 ? p.filter((_, idx) => idx !== i) : ['']));
 
   // singles helpers (max 5)
-  const addSingle = () => setSingles((prev) => (prev.length >= 5 ? prev : [...prev, '']));
-  const setSingleAt = (i: number, v: string) => setSingles((p) => p.map((t, idx) => (idx === i ? v : t)));
-  const removeSingle = (i: number) => setSingles((p) => (p.length > 1 ? p.filter((_, idx) => idx !== i) : ['']));
+  const addSingle = () =>
+    setSingles((prev) => (prev.length >= 5 ? prev : [...prev, { title: '', date: null }]));
+  const setSingleTitleAt = (i: number, v: string) =>
+    setSingles((p) => p.map((t, idx) => (idx === i ? { ...t, title: v } : t)));
+  const setSingleDateAt = (i: number, v: string) =>
+    setSingles((p) => p.map((t, idx) => (idx === i ? { ...t, date: v || null } : t)));
+  const removeSingle = (i: number) =>
+    setSingles((p) => (p.length > 1 ? p.filter((_, idx) => idx !== i) : [{ title: '', date: null }]));
 
   const canSave = useMemo(() => !!relId && !!title, [relId, title]);
 
@@ -339,7 +394,11 @@ export default function EditReleasePage() {
       const staffNum =
         ratingStaff.trim() === '' ? null : Math.max(50, Math.min(100, parseInt(ratingStaff, 10) || 0));
 
-      const singlesClean = singles.map((s) => s.trim()).filter(Boolean).slice(0, 5);
+      const singlesClean = singles
+        .map((s) => ({ title: s.title.trim(), date: s.date && s.date.trim() ? s.date : null }))
+        .filter((s) => s.title)
+        .slice(0, 5);
+
       const albumInfoMarkdown = buildAlbumInfoMarkdown({
         overview: bioOverview,
         background: bioBackground,
@@ -367,14 +426,15 @@ export default function EditReleasePage() {
         seo_title: seoTitle.trim() || null,
         seo_description: seoDesc.trim() || null,
 
-        // NEW structured fields (if columns exist)
+        // NEW structured fields
         album_overview: bioOverview.trim() || null,
         album_background: bioBackground.trim() || null,
         album_commercial: bioCommercial.trim() || null,
         album_critical: bioCritical.trim() || null,
-        album_singles: singlesClean.length ? singlesClean : null,
 
-        // always write legacy combined markdown too so front-end stays compatible
+        // Persist both formats for compatibility
+        album_singles_json: singlesClean.length ? singlesClean : null,        // preferred
+        album_singles: singlesClean.length ? singlesClean.map((s) => s.title) : null, // legacy
         album_info: albumInfoMarkdown,
       };
 
@@ -402,6 +462,8 @@ export default function EditReleasePage() {
           seo_title: payload.seo_title!,
           seo_description: payload.seo_description!,
           album_info: payload.album_info!,
+          // legacy singles only
+          album_singles: payload.album_singles ?? null,
         };
         const { error: upErr2 } = await supabase.from('releases').update(fallback as any).eq('id', relId);
         if (upErr2) throw upErr2;
@@ -565,18 +627,45 @@ export default function EditReleasePage() {
             onChange={(e)=>setBioCritical(e.target.value)}
           />
 
-          {/* Singles (1 per line, up to 5) */}
+          {/* Singles (title + optional date, up to 5) */}
           <div className="rounded-lg border border-zinc-800 p-3">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-sm font-semibold">Singles (up to 5)</h4>
-              <button type="button" className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900 disabled:opacity-40" onClick={addSingle} disabled={singles.length >= 5}>+ Add single</button>
+              <button
+                type="button"
+                className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900 disabled:opacity-40"
+                onClick={addSingle}
+                disabled={singles.length >= 5}
+              >
+                + Add single
+              </button>
             </div>
             <ul className="space-y-2">
               {singles.map((s, i) => (
-                <li key={`sg-${i}`} className="flex items-center gap-2">
-                  <span className="w-6 text-xs opacity-70 tabular-nums">{i+1}.</span>
-                  <input className="input flex-1" placeholder="Single title" value={s} onChange={(e)=>setSingleAt(i, e.target.value)} />
-                  <button type="button" className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900" onClick={()=>removeSingle(i)}>Remove</button>
+                <li key={`sg-${i}`} className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-2 items-center">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 text-xs opacity-70 tabular-nums">{i+1}.</span>
+                    <input
+                      className="input w-full"
+                      placeholder="Single title"
+                      value={s.title}
+                      onChange={(e)=>setSingleTitleAt(i, e.target.value)}
+                    />
+                  </div>
+                  <input
+                    type="date"
+                    className="input"
+                    placeholder="YYYY-MM-DD"
+                    value={s.date ?? ''}
+                    onChange={(e)=>setSingleDateAt(i, e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900"
+                    onClick={()=>removeSingle(i)}
+                  >
+                    Remove
+                  </button>
                 </li>
               ))}
             </ul>
@@ -640,7 +729,7 @@ export default function EditReleasePage() {
         <input className="input sm:col-span-2" placeholder="Producers (comma separated)" value={producers} onChange={e=>setProducers(e.target.value)} />
         <input className="input sm:col-span-2" placeholder="Labels (comma separated)" value={labels} onChange={e=>setLabels(e.target.value)} />
         <input className="input sm:col-span-2" placeholder="YouTube ID (optional)" value={youtube} onChange={e=>setYouTube(e.target.value)} />
-        <input className="input sm:col-span-2" placeholder="RIAA Cert (e.g., 2× Platinum)" value={riaa} onChange={e=>setRIAA(e.target.value)} />
+        <input className="input sm:col-span-2" placeholder="RIAA Cert (e.g., 2× Platinum)" value={riaa} onChange={(e)=>setRIAA(e.target.value)} />
 
         <label className="sm:col-span-2 inline-flex items-center gap-2 select-none mt-2">
           <input type="checkbox" checked={isDouble} onChange={e=>setIsDouble(e.target.checked)} />
