@@ -29,10 +29,17 @@ type ReleaseRow = {
   tracks_disc2: string[] | null;
   rating_staff: number | null;
 
-  // NEW: SEO + Album Info
+  // SEO + legacy freeform
   seo_title: string | null;
   seo_description: string | null;
-  album_info: string | null;
+  album_info: string | null; // legacy freeform bucket
+
+  // NEW (add these columns via migration; UI will also fall back to album_info if absent)
+  album_overview?: string | null;
+  album_background?: string | null; // background / creation process
+  album_commercial?: string | null; // commercial success
+  album_critical?: string | null; // critical success
+  album_singles?: string[] | null; // up to 5
 };
 
 function slugify(s: string) {
@@ -46,6 +53,46 @@ function slugify(s: string) {
 
 // Loosen typing ONLY for the multi-select usage below; runtime stays identical
 const ReleasePickerAny = ReleasePicker as unknown as ComponentType<Record<string, unknown>>;
+
+// --- Helpers to support backward-compat with legacy album_info ---
+function buildAlbumInfoMarkdown(parts: {
+  overview: string;
+  background: string;
+  commercial: string;
+  critical: string;
+  singles: string[];
+}) {
+  const b = [
+    parts.overview && `## Overview\n\n${parts.overview.trim()}`,
+    parts.background && `## Background / Creation\n\n${parts.background.trim()}`,
+    parts.commercial && `## Commercial Success\n\n${parts.commercial.trim()}`,
+    parts.critical && `## Critical Success\n\n${parts.critical.trim()}`,
+    parts.singles.filter(Boolean).length
+      ? `## Singles\n\n${parts.singles.filter(Boolean).map((s) => `- ${s}`).join('\n')}`
+      : ''
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  return b || null;
+}
+
+function parseAlbumInfoMarkdown(s?: string | null) {
+  // extremely light parser; looks for our section headers if present
+  if (!s) return { overview: '', background: '', commercial: '', critical: '', singles: [] as string[] };
+  const out = { overview: '', background: '', commercial: '', critical: '', singles: [] as string[] };
+  const blocks = (s || '').split(/\n(?=##\s)/g);
+  for (const block of blocks) {
+    if (/^##\s+Overview\b/i.test(block)) out.overview = block.replace(/^##\s+Overview\s*/i, '').trim();
+    else if (/^##\s+Background\b/i.test(block)) out.background = block.replace(/^##\s+Background.*\n?/i, '').trim();
+    else if (/^##\s+Commercial/i.test(block)) out.commercial = block.replace(/^##\s+Commercial.*\n?/i, '').trim();
+    else if (/^##\s+Critical/i.test(block)) out.critical = block.replace(/^##\s+Critical.*\n?/i, '').trim();
+    else if (/^##\s+Singles/i.test(block)) {
+      const lines = block.split(/\n/).slice(1).map((l) => l.replace(/^[-*]\s*/, '').trim()).filter(Boolean);
+      out.singles = lines.slice(0, 5);
+    }
+  }
+  return out;
+}
 
 export default function EditReleasePage() {
   const { id } = useParams<{ id: string }>();
@@ -75,10 +122,16 @@ export default function EditReleasePage() {
   const [tracks2, setTracks2] = useState<string[]>(['']);
   const [ratingStaff, setRatingStaff] = useState<string>(''); // free-type 50–100
 
-  // NEW: SEO + Album Info
+  // SEO
   const [seoTitle, setSeoTitle] = useState('');
   const [seoDesc, setSeoDesc] = useState('');
-  const [albumInfo, setAlbumInfo] = useState('');
+
+  // NEW structured album bio
+  const [bioOverview, setBioOverview] = useState('');
+  const [bioBackground, setBioBackground] = useState('');
+  const [bioCommercial, setBioCommercial] = useState('');
+  const [bioCritical, setBioCritical] = useState('');
+  const [singles, setSingles] = useState<string[]>(['']); // up to 5
 
   // multi-artist
   const [albumArtists, setAlbumArtists] = useState<ArtistRow[]>([]);
@@ -135,12 +188,12 @@ export default function EditReleasePage() {
       let rel: ReleaseRow | null = null;
 
       if (!Number.isNaN(nId)) {
-        const { data, error } = await supabase.from('releases').select('*').eq('id', nId).single();
-        if (!error && data) rel = data as ReleaseRow;
+        const { data } = await supabase.from('releases').select('*').eq('id', nId).single();
+        if (data) rel = data as ReleaseRow;
       }
       if (!rel) {
-        const { data, error } = await supabase.from('releases').select('*').eq('slug', id).single();
-        if (!error && data) rel = data as ReleaseRow;
+        const { data } = await supabase.from('releases').select('*').eq('slug', id).single();
+        if (data) rel = data as ReleaseRow;
       }
 
       if (!rel) {
@@ -164,10 +217,25 @@ export default function EditReleasePage() {
       setTracks2((rel.tracks_disc2 && rel.tracks_disc2.length ? rel.tracks_disc2 : ['']).slice());
       setRatingStaff(rel.rating_staff != null ? String(rel.rating_staff) : '');
 
-      // hydrate NEW: SEO + album info
+      // SEO
       setSeoTitle(rel.seo_title || '');
       setSeoDesc(rel.seo_description || '');
-      setAlbumInfo(rel.album_info || '');
+
+      // NEW bio sections (prefer explicit cols; otherwise parse album_info)
+      if (rel.album_overview || rel.album_background || rel.album_commercial || rel.album_critical || rel.album_singles) {
+        setBioOverview(rel.album_overview || '');
+        setBioBackground(rel.album_background || '');
+        setBioCommercial(rel.album_commercial || '');
+        setBioCritical(rel.album_critical || '');
+        setSingles((rel.album_singles && rel.album_singles.length ? rel.album_singles : ['']).slice(0, 5));
+      } else {
+        const parsed = parseAlbumInfoMarkdown(rel.album_info || '');
+        setBioOverview(parsed.overview);
+        setBioBackground(parsed.background);
+        setBioCommercial(parsed.commercial);
+        setBioCritical(parsed.critical);
+        setSingles(parsed.singles.length ? parsed.singles : ['']);
+      }
 
       // release artists (junction)
       const { data: ra } = await supabase
@@ -216,6 +284,11 @@ export default function EditReleasePage() {
   const removeTrack1 = (i: number) => setTracks1((p) => (p.length > 1 ? p.filter((_, idx) => idx !== i) : ['']));
   const removeTrack2 = (i: number) => setTracks2((p) => (p.length > 1 ? p.filter((_, idx) => idx !== i) : ['']));
 
+  // singles helpers (max 5)
+  const addSingle = () => setSingles((prev) => (prev.length >= 5 ? prev : [...prev, '']));
+  const setSingleAt = (i: number, v: string) => setSingles((p) => p.map((t, idx) => (idx === i ? v : t)));
+  const removeSingle = (i: number) => setSingles((p) => (p.length > 1 ? p.filter((_, idx) => idx !== i) : ['']));
+
   const canSave = useMemo(() => !!relId && !!title, [relId, title]);
 
   const matches = useMemo(() => {
@@ -226,8 +299,7 @@ export default function EditReleasePage() {
       .filter(
         (a) =>
           !taken.has(String(a.id)) &&
-          (a.name.toLowerCase().includes(q) || a.slug.toLowerCase().includes(q)
-        )
+          (a.name.toLowerCase().includes(q) || a.slug.toLowerCase().includes(q))
       )
       .slice(0, 8);
   }, [artistQuery, albumArtists, artists]);
@@ -267,7 +339,16 @@ export default function EditReleasePage() {
       const staffNum =
         ratingStaff.trim() === '' ? null : Math.max(50, Math.min(100, parseInt(ratingStaff, 10) || 0));
 
-      // base update (includes NEW seo_title, seo_description, album_info)
+      const singlesClean = singles.map((s) => s.trim()).filter(Boolean).slice(0, 5);
+      const albumInfoMarkdown = buildAlbumInfoMarkdown({
+        overview: bioOverview,
+        background: bioBackground,
+        commercial: bioCommercial,
+        critical: bioCritical,
+        singles: singlesClean,
+      });
+
+      // base update (includes NEW structured fields + legacy album_info markdown for backwards compat)
       const payload: Partial<ReleaseRow> = {
         title: title.trim(),
         slug: slugify(slug || title),
@@ -285,11 +366,48 @@ export default function EditReleasePage() {
 
         seo_title: seoTitle.trim() || null,
         seo_description: seoDesc.trim() || null,
-        album_info: albumInfo.trim() || null,
+
+        // NEW structured fields (if columns exist)
+        album_overview: bioOverview.trim() || null,
+        album_background: bioBackground.trim() || null,
+        album_commercial: bioCommercial.trim() || null,
+        album_critical: bioCritical.trim() || null,
+        album_singles: singlesClean.length ? singlesClean : null,
+
+        // always write legacy combined markdown too so front-end stays compatible
+        album_info: albumInfoMarkdown,
       };
 
-      const { error: upErr } = await supabase.from('releases').update(payload).eq('id', relId);
-      if (upErr) throw upErr;
+      // Attempt update; if DB doesn't yet have the new columns, perform a second update with just legacy fields
+      let updateErr: any = null;
+      const { error: upErr } = await supabase.from('releases').update(payload as any).eq('id', relId);
+      if (upErr) updateErr = upErr;
+
+      if (updateErr && /column .* does not exist/i.test(String(updateErr.message || updateErr))) {
+        // strip unknown keys and retry with the safe subset
+        const fallback: Partial<ReleaseRow> = {
+          title: payload.title!,
+          slug: payload.slug!,
+          year: payload.year!,
+          cover_url: payload.cover_url!,
+          producers: payload.producers!,
+          labels: payload.labels!,
+          youtube_id: payload.youtube_id!,
+          riaa_cert: payload.riaa_cert!,
+          is_double_album: payload.is_double_album!,
+          tracks_disc1: payload.tracks_disc1!,
+          tracks_disc2: payload.tracks_disc2!,
+          artist_id: payload.artist_id!,
+          rating_staff: payload.rating_staff!,
+          seo_title: payload.seo_title!,
+          seo_description: payload.seo_description!,
+          album_info: payload.album_info!,
+        };
+        const { error: upErr2 } = await supabase.from('releases').update(fallback as any).eq('id', relId);
+        if (upErr2) throw upErr2;
+      } else if (updateErr) {
+        throw updateErr;
+      }
 
       // artists junction
       if (albumArtists.length) {
@@ -419,13 +537,51 @@ export default function EditReleasePage() {
           onChange={(e)=>setSeoDesc(e.target.value)}
         />
 
-        {/* Album Info (free text/markdown shown on release page) */}
-        <textarea
-          className="input sm:col-span-2"
-          placeholder="Album Info (Markdown or plain text)"
-          value={albumInfo}
-          onChange={(e)=>setAlbumInfo(e.target.value)}
-        />
+        {/* NEW: Structured Album Bio */}
+        <div className="sm:col-span-2 grid grid-cols-1 gap-3">
+          <h3 className="font-semibold text-sm">Long-form Bio</h3>
+          <textarea
+            className="input"
+            placeholder="Overview"
+            value={bioOverview}
+            onChange={(e)=>setBioOverview(e.target.value)}
+          />
+          <textarea
+            className="input"
+            placeholder="Background / Creation process"
+            value={bioBackground}
+            onChange={(e)=>setBioBackground(e.target.value)}
+          />
+          <textarea
+            className="input"
+            placeholder="Commercial Success"
+            value={bioCommercial}
+            onChange={(e)=>setBioCommercial(e.target.value)}
+          />
+          <textarea
+            className="input"
+            placeholder="Critical Success"
+            value={bioCritical}
+            onChange={(e)=>setBioCritical(e.target.value)}
+          />
+
+          {/* Singles (1 per line, up to 5) */}
+          <div className="rounded-lg border border-zinc-800 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-semibold">Singles (up to 5)</h4>
+              <button type="button" className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900 disabled:opacity-40" onClick={addSingle} disabled={singles.length >= 5}>+ Add single</button>
+            </div>
+            <ul className="space-y-2">
+              {singles.map((s, i) => (
+                <li key={`sg-${i}`} className="flex items-center gap-2">
+                  <span className="w-6 text-xs opacity-70 tabular-nums">{i+1}.</span>
+                  <input className="input flex-1" placeholder="Single title" value={s} onChange={(e)=>setSingleAt(i, e.target.value)} />
+                  <button type="button" className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-900" onClick={()=>removeSingle(i)}>Remove</button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
 
         {/* Artists on this album */}
         <div className="sm:col-span-2 rounded-lg border border-zinc-800 p-3">
