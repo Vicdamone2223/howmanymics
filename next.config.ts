@@ -2,11 +2,6 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  eslint: {
-    // Skip lint errors during Vercel builds (optional)
-    ignoreDuringBuilds: true,
-  },
-
   async rewrites() {
     return [
       {

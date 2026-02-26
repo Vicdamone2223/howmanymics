@@ -1,13 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
+import rehypeRaw from 'rehype-raw';
 
 /* ---------- Types ---------- */
 type Row = {
   title: string;
   cover_url: string | null;
-  body: string | null; // plain text with URLs
+  body: string | null; // Markdown
   author: string | null;
   published_at: string | null;
   kind: 'article' | 'review';
@@ -72,55 +76,64 @@ export default function PageClient({ slug }: { slug: string }) {
         />
       )}
 
-      {/* Body with auto embeds + linkified paragraphs */}
-      <ArticleBody body={row.body ?? ''} />
+      <ArticleBodyMarkdown body={row.body ?? ''} />
+
+      <style jsx global>{`
+        .prose img {
+          margin-top: 1rem;
+          margin-bottom: 1.5rem;
+          display: block;
+        }
+        .prose :where(h1, h2, h3, h4) {
+          margin-top: 1.25em;
+        }
+        .prose p {
+          margin: 0.9em 0;
+        }
+      `}</style>
     </main>
   );
 }
 
-/* ---------- Body renderer (plain text -> blocks + embeds) ---------- */
+/* ---------- Markdown Body Renderer ---------- */
 
-function ArticleBody({ body }: { body: string }) {
+function ArticleBodyMarkdown({ body }: { body: string }) {
   if (!body.trim()) return <p className="opacity-70">No content yet.</p>;
-  const lines = body.replace(/\r\n/g, '\n').split('\n');
 
   return (
-    <article className="space-y-3">
-      {lines.map((line, i) => {
-        const t = line.trim();
-
-        // YouTube (pure link)
-        if (onlyUrl(t) && isYouTubeUrl(t)) {
-          const vid = extractYouTubeId(t);
-          return vid ? <YouTubeBlock key={`yt-${i}`} id={vid} /> : <P key={`p-${i}`}>{line}</P>;
-        }
-
-        // Twitter/X (pure link)
-        if (onlyUrl(t) && isTwitterUrl(t)) {
-          return <TwitterEmbed key={`tw-${i}`} url={t} />;
-        }
-
-        // Instagram (pure link)
-        if (onlyUrl(t) && isInstagramUrl(t)) {
-          return <InstagramEmbed key={`ig-${i}`} url={t} />;
-        }
-
-        // Default paragraph
-        return (
-          <P key={`p-${i}`}>
-            {linkifyToNodes(line)}
-          </P>
-        );
-      })}
+    <article className="prose prose-invert max-w-none">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+        rehypePlugins={[rehypeRaw]}
+        components={{
+          p: ({ node, children }) => (
+            <p className="mb-5 leading-relaxed">{children}</p>
+          ),
+          img: ({ node, ...props }) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              {...props}
+              alt={props.alt ?? ''}
+              className="rounded-lg border border-zinc-800 max-w-full h-auto my-6"
+            />
+          ),
+          a: ({ node, ...props }) => (
+            <a
+              {...props}
+              className="underline decoration-orange-500 underline-offset-4 hover:opacity-90"
+              target={props.href?.startsWith('http') ? '_blank' : undefined}
+              rel={props.href?.startsWith('http') ? 'noopener noreferrer' : undefined}
+            />
+          ),
+        }}
+      >
+        {body.replace(/\n{2,}/g, '\n\n&nbsp;\n\n')}
+      </ReactMarkdown>
     </article>
   );
 }
 
-/* ---------- Blocks / Embeds ---------- */
-
-function P({ children }: { children: React.ReactNode }) {
-  return <p className="prose prose-invert max-w-none">{children}</p>;
-}
+/* ---------- Embeds ---------- */
 
 function YouTubeBlock({ id }: { id: string }) {
   return (
@@ -173,9 +186,16 @@ function InstagramEmbed({ url }: { url: string }) {
 
 /* ---------- Helpers ---------- */
 
-function onlyUrl(s: string) {
-  return /^https?:\/\/\S+$/i.test(s);
+function isAnchorElement(child: unknown): child is React.ReactElement<{ href?: string }> {
+  return (
+    !!child &&
+    typeof child === 'object' &&
+    child !== null &&
+    'type' in (child as any) &&
+    (child as any).type === 'a'
+  );
 }
+
 function isYouTubeUrl(u: string) {
   return /(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(u);
 }
@@ -189,22 +209,14 @@ function extractYouTubeId(u: string): string | null {
   try {
     const url = new URL(u);
     if (url.hostname.includes('youtu.be')) {
-      const id = url.pathname.split('/').filter(Boolean)[0];
-      return cleanId(id);
+      return cleanId(url.pathname.split('/').filter(Boolean)[0]);
     }
     if (url.hostname.includes('youtube.com')) {
-      if (url.pathname.startsWith('/watch')) {
-        const id = url.searchParams.get('v');
-        return id ? cleanId(id) : null;
-      }
-      if (url.pathname.startsWith('/shorts/')) {
-        const id = url.pathname.split('/').filter(Boolean)[1];
-        return cleanId(id);
-      }
-      if (url.pathname.startsWith('/embed/')) {
-        const id = url.pathname.split('/').filter(Boolean)[1];
-        return cleanId(id);
-      }
+      if (url.pathname.startsWith('/watch')) return cleanId(url.searchParams.get('v'));
+      if (url.pathname.startsWith('/shorts/'))
+        return cleanId(url.pathname.split('/').filter(Boolean)[1]);
+      if (url.pathname.startsWith('/embed/'))
+        return cleanId(url.pathname.split('/').filter(Boolean)[1]);
     }
   } catch {}
   return null;
@@ -212,30 +224,4 @@ function extractYouTubeId(u: string): string | null {
 function cleanId(id: string | null) {
   if (!id) return null;
   return id.replace(/[^a-zA-Z0-9_-]/g, '');
-}
-function linkifyToNodes(text: string) {
-  const parts: React.ReactNode[] = [];
-  const urlRegex = /(https?:\/\/[^\s)]+)(?=[\s)]|$)/g;
-  let lastIndex = 0;
-  let m: RegExpExecArray | null;
-
-  while ((m = urlRegex.exec(text)) !== null) {
-    const [url] = m;
-    const start = m.index;
-    if (start > lastIndex) parts.push(text.slice(lastIndex, start));
-    parts.push(
-      <a
-        key={`${url}-${start}`}
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="underline"
-      >
-        {url}
-      </a>
-    );
-    lastIndex = start + url.length;
-  }
-  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
-  return parts.length ? parts : text;
 }

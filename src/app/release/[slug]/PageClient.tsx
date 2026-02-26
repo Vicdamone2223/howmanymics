@@ -170,6 +170,126 @@ function linkifyText(text: string, index: Map<string, string>): ReactNode {
   return out;
 }
 
+/** ---------- Markdown-lite renderer with robust singles date parsing ---------- */
+
+// Parse "… — 1995-07-23", "… - 07/23/1995", "… — (1993 02 04)" etc. (at line END only)
+function parseSingleWithDate(line: string): { title: string; dateText: string | null } {
+  const trimmed = (line || "").trim();
+
+  // Find a trailing date after a hyphen/en dash
+  const match = trimmed.match(
+    /\s(?:—|-)\s*(\(?\d{4}[-/ ]\d{1,2}[-/ ]\d{1,2}\)?|\(?\d{1,2}[-/ ]\d{1,2}[-/ ]\d{4}\)?)\s*$/,
+  );
+
+  let title = trimmed;
+  let dateText: string | null = null;
+
+  if (match && match.index != null) {
+    title = trimmed.slice(0, match.index).trim();
+
+    const rawDate = match[1].replace(/[()]/g, "").trim();
+    const norm = rawDate.replace(/\s+/g, "-").replace(/\//g, "-");
+
+    // yyyy-mm-dd
+    let y: number | null = null;
+    let m: number | null = null;
+    let d: number | null = null;
+
+    let m1 = norm.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    let m2 = norm.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/); // mm-dd-yyyy
+
+    if (m1) {
+      y = +m1[1]; m = +m1[2]; d = +m1[3];
+    } else if (m2) {
+      y = +m2[3]; m = +m2[1]; d = +m2[2];
+    }
+
+    if (y && m && d) {
+      // Create in UTC to avoid TZ shifting
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      if (!isNaN(dt.getTime())) {
+        dateText = dt.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
+      }
+    }
+  }
+
+  return { title, dateText };
+}
+
+function AlbumMarkdown({
+  text,
+  linkify,
+}: {
+  text: string;
+  linkify: (s: string) => ReactNode;
+}) {
+  // supports: "## Heading", paragraphs, "- list items" (Singles)
+  const lines = (text || "").split(/\r?\n/);
+
+  const blocks: Array<{ type: "h2" | "p" | "ul"; content: string[] }> = [];
+  let cur: { type: "p" | "ul"; content: string[] } | null = null;
+
+  const flush = () => { if (cur) blocks.push(cur); cur = null; };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+
+    if (/^##\s+/.test(line)) {
+      flush();
+      blocks.push({ type: "h2", content: [line.replace(/^##\s+/, "").trim()] });
+      continue;
+    }
+    if (/^-\s+/.test(line)) {
+      if (!cur || cur.type !== "ul") { flush(); cur = { type: "ul", content: [] }; }
+      cur.content.push(line.replace(/^-\s+/, ""));
+      continue;
+    }
+    if (line === "") { flush(); continue; }
+
+    if (!cur || cur.type !== "p") { flush(); cur = { type: "p", content: [] }; }
+    cur.content.push(line);
+  }
+  flush();
+
+  return (
+    <article className="markdown-body">
+      {blocks.map((b, i) => {
+        if (b.type === "h2") {
+          return (
+            <h2 key={i} className="text-lg font-bold mt-5 mb-2">
+              {b.content[0]}
+            </h2>
+          );
+        }
+        if (b.type === "ul") {
+          return (
+            <ul key={i} className="list-disc pl-5 my-2 space-y-1">
+              {b.content.map((item, j) => {
+                const { title, dateText } = parseSingleWithDate(item);
+                return (
+                  <li key={j}>
+                    {linkify(title)}
+                    {dateText ? ` — ${dateText}` : ""}
+                  </li>
+                );
+              })}
+            </ul>
+          );
+        }
+        return (
+          <p key={i} className="opacity-90 my-2 whitespace-pre-wrap leading-7">
+            {linkify(b.content.join("\n"))}
+          </p>
+        );
+      })}
+      <style jsx>{`
+        /* safety if no typography plugin */
+        .markdown-body :global(h2) { scroll-margin-top: 80px; }
+      `}</style>
+    </article>
+  );
+}
+
 // ---------- page ----------
 export default function PageClient({ slug }: { slug: string }) {
   const [loading, setLoading] = useState(true);
@@ -264,7 +384,7 @@ export default function PageClient({ slug }: { slug: string }) {
             slug: f?.slug ?? null,
           })).filter((f) => f.name);
 
-        const trk: Track = { title: String(row.title || "").trim(), features: feats };
+          const trk: Track = { title: String(row.title || "").trim(), features: feats };
           const disc = Number(row.disc_no ?? 1);
           if (disc > 1) d2.push(trk); else d1.push(trk);
         });
@@ -389,12 +509,6 @@ export default function PageClient({ slug }: { slug: string }) {
   }
   if (!rel || !view) return <main className="mx-auto max-w-5xl px-4 py-8">Not found.</main>;
 
-  const renderLinkedPara = (t: string, i: number) => (
-    <p key={i} className="opacity-90 whitespace-pre-wrap">
-      {namesLoaded ? linkifyText(t, nameIndex) : t}
-    </p>
-  );
-
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
       {/* Header */}
@@ -453,13 +567,14 @@ export default function PageClient({ slug }: { slug: string }) {
       {/* YouTube */}
       {view.youtube && <div className="mt-6"><YouTube id={view.youtube} /></div>}
 
-      {/* Album Info (linkified) */}
+      {/* Album Info (markdown-lite + linkified names) */}
       {view.albumInfo && (
         <section className="mt-8">
           <h2 className="font-bold mb-2">Album Info</h2>
-          {(view.albumInfo || "")
-            .split(/\n{2,}/)
-            .map((para, i) => renderLinkedPara(para, i))}
+          <AlbumMarkdown
+            text={view.albumInfo || ""}
+            linkify={(s) => (namesLoaded ? linkifyText(s, nameIndex) : s)}
+          />
         </section>
       )}
 
