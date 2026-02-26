@@ -3,7 +3,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
 type Profile = {
@@ -13,7 +12,8 @@ type Profile = {
 };
 
 export default function Header() {
-  const router = useRouter();
+  const [mounted, setMounted] = useState(false);
+
   const [q, setQ] = useState('');
   const [email, setEmail] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -25,56 +25,74 @@ export default function Header() {
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    let authSub: ReturnType<typeof supabase.auth.onAuthStateChange> | null = null;
+    let unsub: (() => void) | undefined;
 
-    async function hydrateFromSession() {
-      const { data } = await supabase.auth.getSession();
-      const u = data.session?.user || null;
-      setEmail(u?.email ?? null);
-
-      if (u?.id) {
-        const { data: p } = await supabase
-          .from('profiles')
-          .select('display_name,username,avatar_url')
-          .eq('id', u.id)
-          .single();
-        if (p) setProfile(p as Profile);
-      } else {
-        setProfile(null);
-      }
-
-      // Check admin flag via RPC
+    async function loadFromSession() {
       try {
-        const { data: isAdm, error } = await supabase.rpc('me_is_admin');
-        setIsAdmin(Boolean(isAdm) && !error);
-      } catch {
-        setIsAdmin(false);
+        const { data } = await supabase.auth.getSession();
+        const u = data.session?.user ?? null;
+        setEmail(u?.email ?? null);
+
+        if (u?.id) {
+          // profile (best-effort)
+          const { data: p } = await supabase
+            .from('profiles')
+            .select('display_name,username,avatar_url')
+            .eq('id', u.id)
+            .single();
+          if (p) setProfile(p as Profile);
+
+          // admin flag (best-effort)
+          try {
+            const { data: isAdm } = await supabase.rpc('me_is_admin');
+            setIsAdmin(Boolean(isAdm));
+          } catch {
+            setIsAdmin(false);
+          }
+        } else {
+          setProfile(null);
+          setIsAdmin(false);
+        }
+      } finally {
+        setMounted(true);
       }
     }
 
-    hydrateFromSession();
+    loadFromSession();
 
-    authSub = supabase.auth.onAuthStateChange(async (_evt, sess) => {
-      const user = sess?.user || null;
-      setEmail(user?.email ?? null);
+    // keep in sync
+    const sub = supabase.auth.onAuthStateChange((_evt, sess) => {
+      const u = sess?.user ?? null;
+      setEmail(u?.email ?? null);
       setProfile(null);
+      setIsAdmin(false);
 
-      if (user?.id) {
-        supabase
-          .from('profiles')
-          .select('display_name,username,avatar_url')
-          .eq('id', user.id)
-          .single()
-          .then(({ data: p }) => p && setProfile(p as Profile));
-      }
+      if (u?.id) {
+        // refresh profile and admin flag on change (async IIFEs to avoid .then/.catch typing)
+        (async () => {
+          try {
+            const { data: p } = await supabase
+              .from('profiles')
+              .select('display_name,username,avatar_url')
+              .eq('id', u.id)
+              .single();
+            if (p) setProfile(p as Profile);
+          } catch {
+            /* ignore */
+          }
+        })();
 
-      try {
-        const { data: isAdm, error } = await supabase.rpc('me_is_admin');
-        setIsAdmin(Boolean(isAdm) && !error);
-      } catch {
-        setIsAdmin(false);
+        (async () => {
+          try {
+            const { data: isAdm } = await supabase.rpc('me_is_admin');
+            setIsAdmin(Boolean(isAdm));
+          } catch {
+            setIsAdmin(false);
+          }
+        })();
       }
     });
+    unsub = () => sub.data.subscription.unsubscribe();
 
     // close avatar menu when clicking outside
     const onDoc = (e: MouseEvent) => {
@@ -84,17 +102,21 @@ export default function Header() {
     document.addEventListener('mousedown', onDoc);
 
     return () => {
-      authSub?.data.subscription.unsubscribe();
+      unsub?.();
       document.removeEventListener('mousedown', onDoc);
     };
   }, []);
 
   async function signOut() {
-    await supabase.auth.signOut();
-    setMenuOpen(false);
-    setNavOpen(false);
-    setIsAdmin(false);
-    router.refresh();
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      setMenuOpen(false);
+      setNavOpen(false);
+      setProfile(null);
+      setIsAdmin(false);
+      setEmail(null);
+    }
   }
 
   const initials = email ? (email[0] || '').toUpperCase() : '';
@@ -105,11 +127,80 @@ export default function Header() {
     { href: '/releases', label: 'Albums' },
     { href: '/rankings', label: 'Rankings' },
     { href: '/articles', label: 'Articles' },
-    { href: '/reviews', label: 'Reviews' },
+    { href: '/reviews',  label: 'Reviews' },
     { href: '/calendar', label: 'Calendar' },
-    { href: '/debates', label: 'Debates' },
-    { href: '/today', label: 'Today in Hip-Hop' },
+    { href: '/debates',  label: 'Debates' },
+    { href: '/today',    label: 'Today in Hip-Hop' },
   ] as const;
+
+  const LoggedOut = (
+    <Link href="/login" className="text-sm opacity-80 hover:opacity-100">
+      Sign in
+    </Link>
+  );
+
+  const LoggedIn = (
+    <>
+      {/* Avatar button opens a small menu */}
+      <button
+        type="button"
+        onClick={() => setMenuOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        className="h-9 w-9 rounded-full border border-zinc-300 bg-white hover:bg-zinc-50 grid place-items-center overflow-hidden"
+      >
+        {avatarSrc ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
+        ) : (
+          <span className="font-bold">{initials}</span>
+        )}
+      </button>
+
+      {menuOpen && (
+        <div
+          role="menu"
+          className="absolute right-0 top-11 w-44 rounded-lg border border-zinc-200 bg-white shadow-md p-1 text-sm"
+        >
+          <Link
+            role="menuitem"
+            href="/account"
+            className="block rounded px-3 py-2 hover:bg-zinc-50"
+            onClick={() => setMenuOpen(false)}
+          >
+            My profile
+          </Link>
+          <Link
+            role="menuitem"
+            href="/account/settings"
+            className="block rounded px-3 py-2 hover:bg-zinc-50"
+            onClick={() => setMenuOpen(false)}
+          >
+            Settings
+          </Link>
+
+          {isAdmin && (
+            <Link
+              role="menuitem"
+              href="/admin"
+              className="block rounded px-3 py-2 hover:bg-zinc-50"
+              onClick={() => setMenuOpen(false)}
+            >
+              Admin
+            </Link>
+          )}
+
+          <button
+            role="menuitem"
+            onClick={signOut}
+            className="w-full text-left rounded px-3 py-2 hover:bg-zinc-50"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/80 text-zinc-900 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/60">
@@ -142,73 +233,8 @@ export default function Header() {
 
         {/* Right side (desktop) */}
         <div className="hidden md:flex items-center gap-2 relative" ref={menuRef}>
-          {!email ? (
-            <Link href="/login" className="text-sm opacity-80 hover:opacity-100">
-              Sign in
-            </Link>
-          ) : (
-            <>
-              {/* Avatar button opens a small menu */}
-              <button
-                type="button"
-                onClick={() => setMenuOpen((v) => !v)}
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                className="h-9 w-9 rounded-full border border-zinc-300 bg-white hover:bg-zinc-50 grid place-items-center overflow-hidden"
-              >
-                {avatarSrc ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
-                ) : (
-                  <span className="font-bold">{initials}</span>
-                )}
-              </button>
-
-              {menuOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 top-11 w-44 rounded-lg border border-zinc-200 bg-white shadow-md p-1 text-sm"
-                >
-                  <Link
-                    role="menuitem"
-                    href="/account"
-                    className="block rounded px-3 py-2 hover:bg-zinc-50"
-                    onClick={() => setMenuOpen(false)}
-                  >
-                    My profile
-                  </Link>
-                  <Link
-                    role="menuitem"
-                    href="/account/settings"
-                    className="block rounded px-3 py-2 hover:bg-zinc-50"
-                    onClick={() => setMenuOpen(false)}
-                  >
-                    Settings
-                  </Link>
-
-                  {/* Admin only */}
-                  {isAdmin && (
-                    <Link
-                      role="menuitem"
-                      href="/admin"
-                      className="block rounded px-3 py-2 hover:bg-zinc-50"
-                      onClick={() => setMenuOpen(false)}
-                    >
-                      Admin
-                    </Link>
-                  )}
-
-                  <button
-                    role="menuitem"
-                    onClick={signOut}
-                    className="w-full text-left rounded px-3 py-2 hover:bg-zinc-50"
-                  >
-                    Sign out
-                  </button>
-                </div>
-              )}
-            </>
-          )}
+          {/* Render logged-out by default to avoid hydration drift; flip after mount */}
+          {mounted && email ? LoggedIn : LoggedOut}
         </div>
 
         {/* Mobile: menu button */}
@@ -264,7 +290,8 @@ export default function Header() {
                 </Link>
               ))}
 
-              {!email ? (
+              {/* Same “default to logged-out” rule on mobile */}
+              {!mounted || !email ? (
                 <Link
                   href="/login"
                   onClick={() => setNavOpen(false)}
@@ -289,7 +316,6 @@ export default function Header() {
                     Settings
                   </Link>
 
-                  {/* Admin only */}
                   {isAdmin && (
                     <Link
                       href="/admin"

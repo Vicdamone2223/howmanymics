@@ -1,5 +1,8 @@
 // src/app/search/page.tsx
-import { supabase } from '@/lib/supabaseClient';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+import { getSupabase } from '@/lib/supabaseClient';
 
 export default async function SearchPage({
   searchParams,
@@ -8,6 +11,9 @@ export default async function SearchPage({
 }) {
   const { q = '' } = await searchParams;
   const term = q.trim();
+
+  // create the client at runtime (prevents build-time crash)
+  const supabase = getSupabase();
 
   let artists: any[] = [];
   let releases: any[] = [];
@@ -45,7 +51,7 @@ export default async function SearchPage({
               <p className="opacity-70 text-sm">No artists found.</p>
             ) : (
               <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                {artists.map(a => (
+                {artists.map((a) => (
                   <li key={a.id} className="rounded-lg border border-zinc-800 p-3">
                     <a href={`/artist/${a.slug}`} className="flex items-center gap-3 hover:underline">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -68,7 +74,7 @@ export default async function SearchPage({
               <p className="opacity-70 text-sm">No albums found.</p>
             ) : (
               <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                {releases.map(r => (
+                {releases.map((r) => (
                   <li key={r.id} className="rounded-lg border border-zinc-800 overflow-hidden">
                     <a href={`/release/${r.slug}`} className="block hover:underline">
                       {/* eslint-disable-next-line @next/next/no-img-element */}

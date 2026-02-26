@@ -2,29 +2,17 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Script from 'next/script';
 import { supabase } from '@/lib/supabaseClient';
 
-type VerseRowBase = {
+type Row = {
   id: number;
-  month: string | null;       // 'YYYY-MM'
+  month: string | null;
   artist_name: string | null;
   song_title: string | null;
-  is_active?: boolean | null; // may not exist
+  ig_url?: string | null;        // one of these will exist
+  instagram_url?: string | null; // (depends on your table)
   created_at: string | null;
 };
-
-// We'll read either ig_url OR instagram_url (whichever your table has)
-type VerseRow = VerseRowBase & {
-  ig_url?: string | null;
-  instagram_url?: string | null;
-};
-
-declare global {
-  interface Window {
-    instgrm?: { Embeds?: { process: () => void } };
-  }
-}
 
 function toInstagramPermalink(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -33,9 +21,10 @@ function toInstagramPermalink(raw: string | null | undefined): string | null {
     const parts = u.pathname.split('/').filter(Boolean);
     if (parts.length >= 2) {
       const kind = parts[0]; // reel | p | tv
-      const id   = parts[1];
+      const id = parts[1];
       return `https://www.instagram.com/${kind}/${id}/`;
     }
+    // fallback – just ensure trailing slash
     return `https://www.instagram.com${u.pathname.replace(/\/?$/, '/')}`;
   } catch {
     return null;
@@ -43,66 +32,38 @@ function toInstagramPermalink(raw: string | null | undefined): string | null {
 }
 
 export default function VerseOfMonth() {
-  const [row, setRow] = useState<VerseRow | null>(null);
+  const [row, setRow] = useState<Row | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
 
-      let got: VerseRow[] | null = null;
+      // try both column shapes, no errors thrown to console
+      const trySelect = async (cols: string) =>
+        supabase.from('verse_of_month').select(cols).order('created_at', { ascending: false }).limit(1);
 
-      // Try a few safe query shapes depending on which columns exist.
-      // 1) ig_url + is_active
-      const q1 = await supabase
-        .from('verse_of_month')
-        .select('id,month,artist_name,song_title,ig_url,is_active,created_at')
-        .order('is_active', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(1);
+      let data: Row[] | null = null;
 
-      if (!q1.error) {
-        got = (q1.data ?? []) as VerseRow[];
-      } else {
-        // 2) ig_url only
-        const q2 = await supabase
-          .from('verse_of_month')
-          .select('id,month,artist_name,song_title,ig_url,created_at')
-          .order('created_at', { ascending: false })
-          .limit(1);
+      // 1) ig_url
+      let q = await trySelect('id,month,artist_name,song_title,ig_url,created_at');
+      if (!q.error && q.data?.length) data = q.data as any;
 
-        if (!q2.error) {
-          got = (q2.data ?? []) as VerseRow[];
-        } else {
-          // 3) instagram_url + is_active
-          const q3 = await supabase
-            .from('verse_of_month')
-            .select('id,month,artist_name,song_title,instagram_url,is_active,created_at')
-            .order('is_active', { ascending: false })
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (!q3.error) {
-            got = (q3.data ?? []) as VerseRow[];
-          } else {
-            // 4) instagram_url only
-            const q4 = await supabase
-              .from('verse_of_month')
-              .select('id,month,artist_name,song_title,instagram_url,created_at')
-              .order('created_at', { ascending: false })
-              .limit(1);
-
-            if (!q4.error) {
-              got = (q4.data ?? []) as VerseRow[];
-            } else {
-              console.error('verse_of_month fetch failed:', q4.error.message);
-            }
-          }
-        }
+      // 2) instagram_url
+      if (!data) {
+        q = await trySelect('id,month,artist_name,song_title,instagram_url,created_at');
+        if (!q.error && q.data?.length) data = q.data as any;
       }
 
-      setRow(got?.[0] ?? null);
+      setRow(data?.[0] ?? null);
       setLoading(false);
+
+      // ask IG to (re)process once data arrives
+      setTimeout(() => {
+        try {
+          (window as any)?.instgrm?.Embeds?.process?.();
+        } catch {}
+      }, 0);
     })();
   }, []);
 
@@ -111,17 +72,18 @@ export default function VerseOfMonth() {
     return toInstagramPermalink(url);
   }, [row?.ig_url, row?.instagram_url]);
 
+  // reprocess when permalink changes
   useEffect(() => {
-    // (re)process Instagram markup whenever the embed url changes
-    window?.instgrm?.Embeds?.process?.();
+    try {
+      (window as any)?.instgrm?.Embeds?.process?.();
+    } catch {}
   }, [permalink]);
 
-  if (loading) return null;
-  if (!row) return null; // no configured verse → hide the section
+  if (loading || !row) return null;
 
   const mm = row.month || new Date().toISOString().slice(0, 7);
   const artist = row.artist_name || 'Unknown Artist';
-  const song   = row.song_title || '';
+  const song = row.song_title || '';
 
   return (
     <section className="mt-8 rounded-xl border border-zinc-800">
@@ -130,7 +92,7 @@ export default function VerseOfMonth() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2">
-        {/* Left: copy */}
+        {/* left copy */}
         <div className="px-4 py-3">
           <h3 className="text-lg font-bold mb-1">
             <span className="hover:underline">{artist}</span>
@@ -139,55 +101,42 @@ export default function VerseOfMonth() {
           <p className="opacity-80 text-sm">Hand-picked verse highlight from this month.</p>
 
           {permalink && (
-            <a
-              href={permalink}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-block mt-4 btn"
-            >
+            <a href={permalink} target="_blank" rel="noreferrer" className="inline-block mt-4 btn">
               Watch on Instagram →
             </a>
           )}
         </div>
 
-        {/* Right: Instagram embed */}
+        {/* right embed */}
         <div className="p-2 md:border-l md:border-zinc-800">
           {permalink ? (
-            <>
-              <blockquote
-                key={permalink}
-                className="instagram-media"
-                data-instgrm-permalink={permalink}
-                data-instgrm-version="14"
-                style={{
-                  background: '#000',
-                  border: 0,
-                  margin: 0,
-                  maxWidth: '100%',
-                  width: '100%',
-                }}
-              />
-              <Script
-                id="ig-embed-js"
-                src="https://www.instagram.com/embed.js"
-                strategy="lazyOnload"
-                onLoad={() => {
-                  try { window.instgrm?.Embeds?.process?.(); } catch {}
-                }}
-              />
-            </>
+            <blockquote
+              key={permalink} // forces IG to re-render when link changes
+              className="instagram-media"
+              data-instgrm-permalink={permalink}
+              data-instgrm-version="14"
+              style={{
+                background: '#000',
+                border: 0,
+                margin: 0,
+                maxWidth: '100%',
+                width: '100%',
+                minHeight: '200px',
+              }}
+            />
           ) : (
-            <div className="h-64 grid place-items-center text-sm opacity-70">
-              Invalid Instagram link.
-            </div>
+            <div className="h-64 grid place-items-center text-sm opacity-70">Invalid Instagram link.</div>
           )}
         </div>
       </div>
 
       <style jsx>{`
         .btn {
-          background: #f97316; color: #000; font-weight: 700;
-          border-radius: 0.5rem; padding: 0.55rem 0.9rem;
+          background: #f97316;
+          color: #000;
+          font-weight: 700;
+          border-radius: 0.5rem;
+          padding: 0.55rem 0.9rem;
         }
       `}</style>
     </section>
